@@ -1,0 +1,61 @@
+wiki_credentials:
+  username: "username"
+  password: "password"
+
+wiki_settings:
+  api_url: "https://wiki.yoursite.org/api.php"
+  index_page: "CNC/tools"
+  page_prefix: "tool"
+
+gui_settings:
+  default_window_size: "1559x780"
+  theme: "Fusion"
+
+file_paths:
+  bits_file_location: "../FreeCAD/Tools/Bit/"
+  library_file_location: "../FreeCAD/Tools/Library/Default.fctl"
+  qr_images_location: "qrImages"
+  bit_images: "BitImages"
+  database_path: "tools.db"
+
+tool_settings:
+  default_shape: "endmill.fcstd"
+  fraction_precision: 64
+  imperial_precision: 4
+  metric_precision: 3
+  angle_precision: 4
+  shape_fields:
+      endmill.fcstd: ["Chipload", "CuttingEdgeHeight", "SpindleDirection"]
+      ballend.fcstd: ["Chipload", "CuttingEdgeHeight"]
+      vbit.fcstd: ["CuttingEdgeAngle", "TipDiameter", "CuttingEdgeHeight"]
+      torus.fcstd: ["TorusRadius", "CuttingEdgeHeight", "Chipload", "SpindleDirection"]
+      drill.fcstd: ["TipAngle", "Chipload"]
+      slittingsaw.fcstd: ["BladeThickness", "CapDiameter", "CapHeight"]
+      probe.fcstd: ["ShaftDiameter", "SpindlePower"]
+  fields_to_format:
+      SuggestedMaxDOC: "dimension"
+      ToolShankSize: "dimension"
+      OAL: "dimension"
+      LOC: "dimension"
+      ToolDiameter: "dimension"
+      Chipload: "dimension"
+      TipDiameter: "dimension"
+      TorusRadius: "dimension"
+      ShaftDiameter: "dimension"
+      BladeThickness: "dimension"
+      CapDiameter: "dimension"
+      CapHeight: "dimension"
+      CuttingEdgeAngle: "angle"
+      TipAngle: "angle"
+      ToolMaxRPM: "rpm"
+      ToolNumber: "number"
+      Flutes: "number"
+
+qr_code_settings:
+  base_url: "https://wiki.knoxmakers.org/Nibblerbot/tools/"
+  box_size: 10
+  border: 2
+
+logging:
+  log_file: "openbitlib.log"
+  log_level: "DEBUG"

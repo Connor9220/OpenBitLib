@@ -1,0 +1,6 @@
+oldfiles
+__pycache__
+.gitignore.swp
+qrImages/
+BitImages/
+config.yaml
