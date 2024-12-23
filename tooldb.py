@@ -4,6 +4,10 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtWidgets import QWidget, QVBoxLayout
 from qtpy.QtCore import Qt
+from qtpy.QtGui import QIcon
+from qtpy.QtCore import QUrl
+from qtpy.QtGui import QDesktopServices
+
 from gentoolwiki import delete_wiki_item, create_session, main as wiki_main, generate_index_page_content, upload_wiki_page, generate_tools_json
 import re
 import time
@@ -245,7 +249,17 @@ class ToolDatabaseGUI(QMainWindow):
             "SuggestedRPM": {"label": self.COLUMN_LABELS["SuggestedRPM"], "widget": QLineEdit(), "column": "right", "width": 300},
             "PartNumber": {"label": self.COLUMN_LABELS["PartNumber"], "widget": QLineEdit(), "column": "right", "width": 300},
             "ManufacturerName": {"label": self.COLUMN_LABELS["ManufacturerName"], "widget": QLineEdit(), "column": "right", "width": 500},
-            "ToolOrderURL": {"label": self.COLUMN_LABELS["ToolOrderURL"], "widget": QLineEdit(), "column": "right", "width": 500},
+            #"ToolOrderURL": {"label": self.COLUMN_LABELS["ToolOrderURL"], "widget": QLineEdit(), "column": "right", "width": 500},
+
+            # Updated ToolOrderURL with button
+            "ToolOrderURL": {
+                "label": self.COLUMN_LABELS["ToolOrderURL"],
+                "widget": self.create_tool_order_url_widget(500),
+                "column": "right",
+                "width": 500,
+            },
+
+
             "Materials": {"label": self.COLUMN_LABELS["Materials"], "widget": QTextEdit(), "column": "right", "width": 500, "height": 70},
             "AdditionalNotes": {"label": self.COLUMN_LABELS["AdditionalNotes"], "widget": QTextEdit(), "column": "right", "width": 500, "height": 70},
             "SuggestedFeedRate": {"label": self.COLUMN_LABELS["SuggestedFeedRate"], "widget": QTextEdit(), "column": "right", "width": 500, "height": 70},
@@ -394,6 +408,86 @@ class ToolDatabaseGUI(QMainWindow):
 
         self.load_data()
         self.add_tool(from_init=True)
+
+
+    def setup_tool_order_url_button(self):
+        # Get the existing ToolOrderURL widget
+        url_field = self.page1_fields["ToolOrderURL"]["widget"]
+
+        # Create a new layout to wrap the existing widget and a button
+        tool_order_layout = QHBoxLayout()
+
+        # Add the existing URL input field to the layout
+        tool_order_layout.addWidget(url_field)
+
+        # Add a button with a link icon
+        open_url_button = QPushButton()
+        open_url_button.setIcon(QIcon("path_to_icon.png"))  # Replace with your actual icon path
+        open_url_button.setMaximumWidth(30)
+        tool_order_layout.addWidget(open_url_button)
+
+        # Create a container widget for the layout
+        container_widget = QWidget()
+        container_widget.setLayout(tool_order_layout)
+
+        # Replace the existing ToolOrderURL widget with the new container
+        self.page1_fields["ToolOrderURL"]["widget"] = container_widget
+
+        # Connect the button to the function
+        open_url_button.clicked.connect(lambda: self.open_url_in_browser(url_field.text()))
+
+
+    def create_tool_order_url_widget(self, total_width):
+        # Create the layout and widgets for the ToolOrderURL field
+        button_width = 30  # Width of the button
+        spacing = 5  # Optional spacing between the text field and button
+
+        # Calculate the adjusted width for the QLineEdit
+        adjusted_width = total_width - button_width - spacing
+
+        # Create the layout for ToolOrderURL
+        tool_order_layout = QHBoxLayout()
+        tool_order_layout.setContentsMargins(0, 0, 0, 0)
+        tool_order_layout.setSpacing(spacing)
+
+        # Existing QLineEdit for URL input
+        tool_order_url_input = QLineEdit()
+        tool_order_url_input.setFixedWidth(adjusted_width)  # Set the adjusted width
+        tool_order_url_input.setFixedHeight(30)
+        tool_order_layout.addWidget(tool_order_url_input)
+
+        # Add a button to open the URL
+        open_url_button = QPushButton()
+        open_url_button.setIcon(QIcon("icons/external-link.svg"))  # Replace with your icon's path
+        open_url_button.setMaximumWidth(button_width)
+
+        tool_order_layout.addWidget(open_url_button)
+
+        # Create a container widget for the layout
+        container_widget = QWidget()
+        container_widget.setLayout(tool_order_layout)
+        container_widget.setFixedHeight(30)
+        open_url_button.setEnabled(False)  # Initially disabled
+
+        # Connect QLineEdit's textChanged signal to a function to enable/disable the button
+        tool_order_url_input.textChanged.connect(
+            lambda text: open_url_button.setEnabled(bool(text.strip()))
+        )
+
+        # Connect the button click to open the URL
+        open_url_button.clicked.connect(lambda: self.open_url_in_browser(tool_order_url_input.text()))
+
+        return container_widget
+
+    def open_url_in_browser(self, url):
+        """
+        Open the specified URL in the user's default web browser.
+        """
+        if url.strip():
+            QDesktopServices.openUrl(QUrl(url))
+        #else:
+        #    QMessageBox.warning(self, "Invalid URL", "The URL field is empty or invalid.")
+
 
     def setup_table(self):
         """Setup the data table."""
@@ -670,10 +764,17 @@ class ToolDatabaseGUI(QMainWindow):
         # Populate the input fields dynamically
         for field_name, widget in self.tool_inputs.items():
             value = row_data.get(field_name, "")
-            if isinstance(widget, QLineEdit) or isinstance(widget, QTextEdit):
-                widget.setText(value)
-            elif isinstance(widget, QComboBox):
-                widget.setCurrentText(value)
+            if field_name == "ToolOrderURL":
+                # Access the QLineEdit inside the custom widget
+                tool_order_layout = widget.layout()  # Get the layout of the ToolOrderURL widget
+                url_input = tool_order_layout.itemAt(0).widget()  # Assuming the QLineEdit is the first widget
+                if isinstance(url_input, QLineEdit):
+                    url_input.setText(value)
+            else:
+                if isinstance(widget, QLineEdit) or isinstance(widget, QTextEdit):
+                    widget.setText(value)
+                elif isinstance(widget, QComboBox):
+                    widget.setCurrentText(value)
 
         # Set the button to "Update" mode
         self.set_update_button_mode(is_edit_mode=True)
@@ -704,12 +805,21 @@ class ToolDatabaseGUI(QMainWindow):
                 data.append(None)  # Handle missing widgets gracefully
                 continue
 
-            # Retrieve data based on widget type
-            if isinstance(widget, QLineEdit) or isinstance(widget, QTextEdit):
-                text = widget.text() if isinstance(widget, QLineEdit) else widget.toPlainText()
-                data.append(text if text else None)
-            elif isinstance(widget, QComboBox):
-                data.append(widget.currentText() if widget.currentText() else None)
+            if column == "ToolOrderURL":
+                # Special case for ToolOrderURL (wrapped in a custom widget)
+                tool_order_layout = widget.layout()  # Get the layout of the ToolOrderURL widget
+                url_input = tool_order_layout.itemAt(0).widget()  # Assuming the QLineEdit is the first widget
+                if isinstance(url_input, QLineEdit):
+                    data.append(url_input.text().strip())  # Retrieve the URL text
+                else:
+                    data.append(None)
+            else:
+                # Retrieve data based on widget type
+                if isinstance(widget, QLineEdit) or isinstance(widget, QTextEdit):
+                    text = widget.text() if isinstance(widget, QLineEdit) else widget.toPlainText()
+                    data.append(text if text else None)
+                elif isinstance(widget, QComboBox):
+                    data.append(widget.currentText() if widget.currentText() else None)
         return data
 
     def add_tool(self, from_init=False):
@@ -721,11 +831,18 @@ class ToolDatabaseGUI(QMainWindow):
         """
         try:
             # Clear all fields
-            for widget in self.tool_inputs.values():
-                if isinstance(widget, QLineEdit) or isinstance(widget, QTextEdit):
-                    widget.clear()
-                elif isinstance(widget, QComboBox):
-                    widget.setCurrentIndex(0)
+            for field_name, widget in self.tool_inputs.items():
+                if field_name == "ToolOrderURL":
+                    # Special case for ToolOrderURL (custom widget)
+                    tool_order_layout = widget.layout()  # Get the layout of the ToolOrderURL widget
+                    url_input = tool_order_layout.itemAt(0).widget()  # Assuming the QLineEdit is the first widget
+                    if isinstance(url_input, QLineEdit):
+                        url_input.clear()  # Clear the text in the QLineEdit
+                else:
+                    if isinstance(widget, QLineEdit) or isinstance(widget, QTextEdit):
+                        widget.clear()
+                    elif isinstance(widget, QComboBox):
+                        widget.setCurrentIndex(0)
 
             # Set default for Shape field
             if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
