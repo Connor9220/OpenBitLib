@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import sqlite3
 import os
 import qrcode
@@ -141,13 +143,14 @@ def map_tool_to_json(tool, columns):
 
     # Define parameters based on tool shapes
     shape_parameters = {
-        "drill.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "Material", "TipAngle"],
-        "endmill.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "CuttingEdgeHeight", "Material", "ShankDiameter", "SpindleDirection"],
-        "ballend.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeHeight", "Length", "Material", "ShankDiameter"],
-        "vbit.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeAngle", "CuttingEdgeHeight", "Length", "Material", "ShankDiameter", "TipDiameter"],
-        "torus.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeHeight", "TorusRadius", "Length", "Material", "ShankDiameter"],
+        "drill.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "Material", "TipAngle", "Stickout"],
+        "endmill.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "CuttingEdgeHeight", "Material", "ShankDiameter", "SpindleDirection", "Stickout"],
+        "ballend.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeHeight", "Length", "Material", "ShankDiameter", "Stickout"],
+        "v-bit.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeAngle", "CuttingEdgeHeight", "Length", "Material", "ShankDiameter", "TipDiameter", "Stickout"],
+        "torus.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeHeight", "TorusRadius", "Length", "Material", "ShankDiameter", "Stickout"],
         "slittingsaw.fcstd": ["Chipload", "Diameter", "BladeThickness", "CapDiameter", "CapHeight", "Material", "ShankDiameter"],
-        "probe.fcstd": ["Diameter", "Length", "ShaftDiameter", "SpindlePower"]
+        "probe.fcstd": ["Diameter", "Length", "ShaftDiameter", "SpindlePower"],
+        "roundover.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "Material", "CuttingRadius","CuttingEdgeHeight", "ShankDiameter", "TipDiameter","Chipload", "Stickout"],
     }
 
     shape = tool_data_dict.get("Shape", "unknown")
@@ -192,7 +195,9 @@ def map_sqlite_column_to_json_param(param):
         "ShaftDiameter": "ShaftDiameter",
         "SpindlePower": "SpindlePower",
         "SpindleDirection": "SpindleDirection",
-        "Shape": "Shape"
+        "Shape": "Shape",
+        "Stickout": "Stickout",
+        "CuttingRadius": "CuttingRadius",
     }
     return mapping.get(param, param)
 
@@ -410,7 +415,7 @@ def upload_image(session, api_url, file_path, file_name):
 
 def upload_image_if_changed(session, api_url, file_path, file_name, database_path, tool_number):
     """
-    Upload an image to MediaWiki only if it has changed.
+    Upload an image to MediaWiki only if it has changed and the file exists.
 
     Compares the hash of the current image file with the hash stored in the
     database. If they differ, uploads the image and updates the stored hash.
@@ -426,22 +431,33 @@ def upload_image_if_changed(session, api_url, file_path, file_name, database_pat
     Returns:
         None
     """
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        print(f"Image file not found: {file_path}. Skipping upload.")
+        return
+
+    # Compute the current hash of the image
     current_hash = get_image_hash(file_path)
+
+    # Connect to the database and fetch the stored hash
     connection = sqlite3.connect(database_path)
     cursor = connection.cursor()
     cursor.execute("SELECT ImageHash FROM tools WHERE ToolNumber = ?", (tool_number,))
-    stored_hash = cursor.fetchone()[0]
+    result = cursor.fetchone()
+    stored_hash = result[0] if result else None
 
+    # Compare hashes and upload if they differ
     if current_hash != stored_hash:
         response = upload_image(session, api_url, file_path, file_name)
         if response.get("upload", {}).get("result") == "Success":
             update_image_hash(database_path, tool_number, current_hash)
-            print("Image uploaded and hash updated.")
+            print(f"Image {file_name} uploaded and hash updated.")
         else:
-            print("Failed to upload image:", response)
+            print(f"Failed to upload image {file_name}: {response}")
     else:
-        print("Image unchanged. No upload needed.")
+        print(f"Image {file_name} unchanged. No upload needed.")
 
+    # Close the database connection
     connection.close()
 
 def upload_wiki_page(session, api_url, page_title, content):
