@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 tooldb.py
+python3 tooldb_v2.py
