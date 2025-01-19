@@ -7,14 +7,20 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt, QTimer, QUrl, QStringListModel
 from qtpy.QtGui import QGuiApplication, QIcon, QDesktopServices, QPixmap
-
+import json
 from gentoolwiki import (
     delete_wiki_item, main as wiki_main, generate_index_page_content,
-    upload_wiki_page, generate_tools_json
+    upload_wiki_page, generate_tools_json, map_column_names
 )
+
+from db_utils import *
+
+from fractions import Fraction
+
 import re
 import time
 import sqlite3
+
 from settings import load_config
 
 # Load the configuration
@@ -102,93 +108,6 @@ class FilterableComboBox(QComboBox):
         self.line_edit.selectAll()
         super().focusInEvent(event)
 
-
-class DatabaseManager:
-    def __init__(self, db_path="tools.db"):
-        self.db_path = db_path
-        self.connection = sqlite3.connect(self.db_path)
-
-    def fetch_all(self):
-        with self.connection:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT ToolNumber, ToolName, ToolType, Shape, ToolShankSize, Flutes, OAL, LOC,
-                    ToolMaxRPM, ToolDiameter, ToolMaterial, ToolCoating, PartNumber,
-                    ManufacturerName, ToolOrderURL, Materials, SuggestedRPM,
-                    SuggestedMaxDOC, AdditionalNotes, SuggestedFeedRate, ToolImageFileName,
-                    Chipload, TipAngle, CuttingEdgeAngle, TipDiameter, TorusRadius,
-                    ShaftDiameter, SpindleDirection, SpindlePower, BladeThickness,
-                    CapDiameter, CapHeight, Stickout, CuttingRadius
-                FROM tools
-            """)
-            columns = [description[0] for description in cursor.description]
-            data = cursor.fetchall()
-        return data, columns
-
-    def fetch_filtered(self, keyword):
-        with self.connection:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT ToolNumber, ToolName, ToolType, Shape, ToolShankSize, Flutes, OAL, LOC, ToolMaxRPM, ToolDiameter,
-                    ToolMaterial, ToolCoating, PartNumber, ManufacturerName, ToolOrderURL, Materials, SuggestedRPM,
-                    SuggestedMaxDOC, AdditionalNotes, SuggestedFeedRate, ToolImageFileName, Chipload, TipAngle,
-                    CuttingEdgeAngle, TipDiameter, TorusRadius, ShaftDiameter, SpindleDirection, SpindlePower,
-                    BladeThickness, CapDiameter, CapHeight, Stickout, CuttingRadius
-                FROM tools
-                WHERE ToolName LIKE ?
-                OR ToolType LIKE ?
-                OR ToolNumber LIKE ?
-                OR ManufacturerName LIKE ?
-            """, (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"))
-
-            # Retrieve column names dynamically
-            columns = [description[0] for description in cursor.description]
-            data = cursor.fetchall()
-        return data, columns
-
-
-    def fetch_shapes(self):
-        """Fetch all shapes from the FCShapes table."""
-        with self.connection:
-            rows = self.connection.execute("SELECT ShapeName FROM FCShapes ORDER BY ShapeName").fetchall()
-            return [row[0] for row in rows]
-
-    def insert(self, data):
-        with self.connection:
-            self.connection.execute(
-                """
-                INSERT INTO tools (
-                    ToolNumber, ToolName, ToolType, Shape, ToolShankSize, Flutes, OAL, LOC, ToolMaxRPM,
-                    ToolDiameter, ToolMaterial, ToolCoating, PartNumber, ManufacturerName, ToolOrderURL,
-                    Materials, SuggestedRPM, SuggestedMaxDOC, AdditionalNotes, SuggestedFeedRate,
-                    ToolImageFileName, Chipload, TipAngle, CuttingEdgeAngle, TipDiameter, TorusRadius,
-                    ShaftDiameter, SpindleDirection, SpindlePower, BladeThickness, CapDiameter, CapHeight, Stickout, CuttingRadius
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                data,
-            )
-
-    def update(self, tool_number, data):
-        with self.connection:
-            self.connection.execute(
-                """
-                UPDATE tools SET
-                    ToolName = ?, ToolType = ?, Shape = ?, ToolShankSize = ?, Flutes = ?, OAL = ?, LOC = ?,
-                    ToolMaxRPM = ?, ToolDiameter = ?, ToolMaterial = ?, ToolCoating = ?, PartNumber = ?,
-                    ManufacturerName = ?, ToolOrderURL = ?, Materials = ?, SuggestedRPM = ?, SuggestedMaxDOC = ?,
-                    AdditionalNotes = ?, SuggestedFeedRate = ?, ToolImageFileName = ?, Chipload = ?,
-                    TipAngle = ?, CuttingEdgeAngle = ?, TipDiameter = ?, TorusRadius = ?, ShaftDiameter = ?,
-                    SpindleDirection = ?, SpindlePower = ?, BladeThickness = ?, CapDiameter = ?, CapHeight = ?,
-                    Stickout = ?, CuttingRadius = ?
-                    WHERE ToolNumber = ?
-                """,
-                data + [tool_number],
-            )
-
-    def delete(self, tool_number):
-        with self.connection:
-            self.connection.execute("DELETE FROM tools WHERE ToolNumber = ?", (tool_number,))
-
 class ToolDatabaseGUI(QMainWindow):
     def __init__(self, config):
         super().__init__()
@@ -198,9 +117,10 @@ class ToolDatabaseGUI(QMainWindow):
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)  # Ensure the timer only triggers once after reset
         self.search_timer.timeout.connect(self.perform_search)
+        self.original_shape = None
 
         # Initialize database connection
-        self.db = DatabaseManager()
+        #self.db = DatabaseManager()
 
         self.setWindowTitle("OpenBitLib - Toolbit Database Manager")
 
@@ -287,17 +207,12 @@ class ToolDatabaseGUI(QMainWindow):
             "CapHeight": "Cap Height",
             "Stickout": "Stickout",
             "CuttingRadius": "Cutting Radius",
+            "ShapeParameter": "ShapeParameter",
+            "ShapeAttribute": "ShapeAttribute",
         }
 
         # Define column names
-        self.column_names = [
-            "ToolNumber", "ToolName", "ToolType", "Shape", "ToolShankSize", "Flutes", "OAL",
-            "LOC", "ToolMaxRPM", "ToolDiameter", "ToolMaterial", "ToolCoating", "PartNumber",
-            "ManufacturerName", "ToolOrderURL", "Materials", "SuggestedRPM", "SuggestedMaxDOC",
-            "AdditionalNotes", "SuggestedFeedRate", "ToolImageFileName", "Chipload", "TipAngle",
-            "CuttingEdgeAngle", "TipDiameter", "TorusRadius", "ShaftDiameter", "SpindleDirection",
-            "SpindlePower", "BladeThickness", "CapDiameter", "CapHeight", "Stickout","CuttingRadius",
-        ]
+        self.column_names = fetch_column_names("tools")
 
         # Initialize UI components
         self.tool_inputs = {}
@@ -432,18 +347,18 @@ class ToolDatabaseGUI(QMainWindow):
         self.page2_fields = {
             "Shape": {"label": self.COLUMN_LABELS["Shape"], "widget": QComboBox(), "width": 200},
             "Stickout": {"label": self.COLUMN_LABELS["Stickout"], "widget": QLineEdit(), "width": 150},
-            "Chipload": {"label": self.COLUMN_LABELS["Chipload"], "widget": QLineEdit(), "width": 150},
-            "TipAngle": {"label": self.COLUMN_LABELS["TipAngle"], "widget": QLineEdit(), "width": 150},
-            "CuttingEdgeAngle": {"label": self.COLUMN_LABELS["CuttingEdgeAngle"], "widget": QLineEdit(), "width": 150},
-            "TipDiameter": {"label": self.COLUMN_LABELS["TipDiameter"], "widget": QLineEdit(), "width": 150},
-            "TorusRadius": {"label": self.COLUMN_LABELS["TorusRadius"], "widget": QLineEdit(), "width": 150},
-            "ShaftDiameter": {"label": self.COLUMN_LABELS["ShaftDiameter"], "widget": QLineEdit(), "width": 150},
-            "SpindleDirection": {"label": self.COLUMN_LABELS["SpindleDirection"], "widget": QLineEdit(), "width": 150},
-            "SpindlePower": {"label": self.COLUMN_LABELS["SpindlePower"], "widget": QLineEdit(), "width": 150},
-            "BladeThickness": {"label": self.COLUMN_LABELS["BladeThickness"], "widget": QLineEdit(), "width": 150},
-            "CapDiameter": {"label": self.COLUMN_LABELS["CapDiameter"], "widget": QLineEdit(), "width": 150},
-            "CapHeight": {"label": self.COLUMN_LABELS["CapHeight"], "widget": QLineEdit(), "width": 150},
-            "CuttingRadius": {"label": self.COLUMN_LABELS["CuttingRadius"], "widget": QLineEdit(), "width": 150},
+            # "Chipload": {"label": self.COLUMN_LABELS["Chipload"], "widget": QLineEdit(), "width": 150},
+            # "TipAngle": {"label": self.COLUMN_LABELS["TipAngle"], "widget": QLineEdit(), "width": 150},
+            # "CuttingEdgeAngle": {"label": self.COLUMN_LABELS["CuttingEdgeAngle"], "widget": QLineEdit(), "width": 150},
+            # "TipDiameter": {"label": self.COLUMN_LABELS["TipDiameter"], "widget": QLineEdit(), "width": 150},
+            # "TorusRadius": {"label": self.COLUMN_LABELS["TorusRadius"], "widget": QLineEdit(), "width": 150},
+            # "ShaftDiameter": {"label": self.COLUMN_LABELS["ShaftDiameter"], "widget": QLineEdit(), "width": 150},
+            # "SpindleDirection": {"label": self.COLUMN_LABELS["SpindleDirection"], "widget": QLineEdit(), "width": 150},
+            # "SpindlePower": {"label": self.COLUMN_LABELS["SpindlePower"], "widget": QLineEdit(), "width": 150},
+            # "BladeThickness": {"label": self.COLUMN_LABELS["BladeThickness"], "widget": QLineEdit(), "width": 150},
+            # "CapDiameter": {"label": self.COLUMN_LABELS["CapDiameter"], "widget": QLineEdit(), "width": 150},
+            # "CapHeight": {"label": self.COLUMN_LABELS["CapHeight"], "widget": QLineEdit(), "width": 150},
+            # "CuttingRadius": {"label": self.COLUMN_LABELS["CuttingRadius"], "widget": QLineEdit(), "width": 150},
         }
 
         for field, config in self.page2_fields.items():
@@ -464,20 +379,39 @@ class ToolDatabaseGUI(QMainWindow):
                     lambda name=field: self.format_field(name)
                 )
 
-        shapes = self.db.fetch_shapes()
+        shapes = fetch_shapes()
         if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
             self.tool_inputs["Shape"].clear()  # Clear existing items
             self.tool_inputs["Shape"].addItems(shapes)
-            self.tool_inputs["Shape"].currentTextChanged.connect(self.update_fields_visibility)
+            # self.tool_inputs["Shape"].currentTextChanged.connect(self.update_table_with_non_direct_fields)
+            self.tool_inputs["Shape"].currentTextChanged.connect(self.on_shape_changed)
 
         self.stacked_widget.addWidget(self.page2)
+
+
+        # Add Table Widget for Non-Direct Fields
+        self.tableWidget = QTableWidget()
+        self.tableWidget.setColumnCount(2)
+        self.tableWidget.setHorizontalHeaderLabels(["Field Name", "Value"])
+        self.tableWidget.setEditTriggers(QAbstractItemView.DoubleClicked)  # Allow editing the value column
+        self.tableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tableWidget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tableWidget.horizontalHeader().setStretchLastSection(True)
+        self.tableWidget.verticalHeader().setVisible(False)
+        self.tableWidget.setMinimumHeight(200)  # Adjust height as needed
+
+        # Add the table widget to the Page 2 layout
+        self.page2_layout.addRow(QLabel("Non-Direct Fields:"), self.tableWidget)
+        self.tableWidget.itemChanged.connect(self.on_table_item_changed)
 
         # Navigation Buttons
         self.nav_layout = QHBoxLayout()
         self.page1_button = QPushButton("Basic Info")
         self.page1_button.clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.page1))
+
         self.page2_button = QPushButton("FreeCAD Parameters")
-        self.page2_button.clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.page2))
+        self.page2_button.clicked.connect(self.on_page2_button_clicked)
+
         self.nav_layout.addWidget(self.page1_button)
         self.nav_layout.addWidget(self.page2_button)
         self.layout.addLayout(self.nav_layout)
@@ -505,6 +439,13 @@ class ToolDatabaseGUI(QMainWindow):
 
         self.load_data()
         self.add_tool(from_init=True)
+
+    def on_page2_button_clicked(self):
+        """
+        Handle switching to the 'FreeCAD Parameters' page and resize table columns.
+        """
+        self.stacked_widget.setCurrentWidget(self.page2)
+        self.tableWidget.resizeColumnsToContents()  # Adjust column widths dynamically
 
 
     def create_url_widget(self, total_width, generate_url_callback=None):
@@ -591,28 +532,208 @@ class ToolDatabaseGUI(QMainWindow):
         self.table.setHorizontalHeaderLabels(headers)
         self.layout.addWidget(self.table)
 
-    def update_fields_visibility(self):
+    def get_column_index_by_name(self, table_widget, column_name):
         """
-        Show or hide fields and their labels based on the selected shape.
+        Retrieve the column index for a given column name in the table widget.
+
+        Args:
+            table_widget (QTableWidget): The table widget to search.
+            column_name (str): The name of the column header.
+
+        Returns:
+            int: The column index if found, or -1 if the column name is not found.
         """
+        for col in range(table_widget.columnCount()):
+            if table_widget.horizontalHeaderItem(col).text() == column_name:
+                return col
+        return -1
+
+
+    def on_table_item_changed(self, item):
+        """
+        Handle changes to table items and apply formatting if the field requires it.
+        Only formats the second column (Value).
+        """
+        # Ensure the item is in the second column
+        if item.column() != 1:  # Column index 1 is the Value column
+            return
+
+        # Get the field name from the first column
+        field_name_item = self.tableWidget.item(item.row(), 0)
+        if not field_name_item:
+            return
+
+        # Convert the human-readable name back to the key used in fields_to_format
+        field_name = self.make_machine_readable(field_name_item.text())
+
+        if field_name in self.fields_to_format:
+            field_type = self.fields_to_format[field_name]
+            formatted_value = self.apply_field_format(item.text(), field_type)
+            item.setText(formatted_value)
+
+        self.tableWidget.resizeColumnsToContents()
+
+    def make_human_readable(self, value):
+        """
+        Convert a field name (e.g., CamelCase or PascalCase) to a human-readable format.
+
+        Args:
+            field_name (str): The field name to convert.
+
+        Returns:
+            str: The human-readable version of the field name.
+        """
+        # Insert a space before each uppercase letter followed by a lowercase letter
+        # or between two uppercase letters followed by a lowercase
+        human_readable = re.sub(r'(?<!^)(?=[A-Z])', ' ', value)
+        # Capitalize the first letter of each word
+        return human_readable.strip().title()
+
+    def make_machine_readable(self, value):
+        """
+        Convert a human-readable field name (e.g., "Tool Diameter") back to a machine-readable format (e.g., "ToolDiameter").
+
+        Args:
+            value (str): The human-readable field name.
+
+        Returns:
+            str: The machine-readable version of the field name.
+        """
+        # Split by spaces and capitalize each word, then join without spaces
+        words = value.split()
+        return ''.join(word.capitalize() for word in words)
+
+    def initialize_column_indices(self):
+        """
+        Initialize column indices for ShapeParameter and ShapeAttribute.
+        Also, dump the current state of the table for debugging.
+        """
+        # Get and print table headers
+        headers = [self.table.horizontalHeaderItem(col).text() for col in range(self.table.columnCount())]
+
+        for row in range(self.table.rowCount()):
+            row_data = []
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                row_data.append(item.text() if item else "EMPTY")
+
+        # Initialize column indices for ShapeParameter and ShapeAttribute
+        self.shape_parameter_col = headers.index("ShapeParameter") if "ShapeParameter" in headers else -1
+        self.shape_attribute_col = headers.index("ShapeAttribute") if "ShapeAttribute" in headers else -1
+
+        if self.shape_parameter_col == -1 or self.shape_attribute_col == -1:
+            print("Warning: 'ShapeParameter' or 'ShapeAttribute' column not found. Skipping column index initialization.")
+
+    def update_table_with_non_direct_fields(self, tool_row):
+        """
+        Populate the table widget with fields from ShapeParameter and ShapeAttribute
+        that do not match any direct fields in the tool table.
+
+        If tool data exists, populate the table with actual values for non-direct fields.
+        Otherwise, populate it with fields from the shape with empty values.
+
+        Args:
+            tool_row (int): The selected row index in the `table` widget.
+        """
+
         selected_shape = self.tool_inputs["Shape"].currentText()
 
-        # Common fields that are always visible
-        always_visible_fields = set([
-            "ToolNumber", "ToolName", "ToolType", "Shape", "ToolShankSize", "Flutes",
-            "OAL", "LOC", "ToolMaxRPM", "ToolDiameter", "ToolMaterial", "ToolCoating",
-            "PartNumber", "ManufacturerName", "ToolOrderURL", "Materials", "SuggestedRPM",
-            "SuggestedMaxDOC", "AdditionalNotes", "SuggestedFeedRate", "ToolImageFileName"
-        ])
+        # Fetch shape data
+        shape_data = fetch_shapes(selected_shape)
+        if not shape_data:
+            self.tableWidget.clearContents()
+            self.tableWidget.setRowCount(0)
+            return
 
-        # Fields specific to the selected shape
-        specific_fields = set(self.shape_fields.get(selected_shape, []))
+        # Parse ShapeParameter and ShapeAttribute
+        shape_parameters = json.loads(shape_data.ShapeParameter) if shape_data.ShapeParameter else []
+        shape_attributes = json.loads(shape_data.ShapeAttribute) if shape_data.ShapeAttribute else []
 
-        # Update visibility for page1 fields
-        #self.update_page_fields_visibility(self.page1_layout, always_visible_fields, specific_fields)
+        # Combine ShapeParameter and ShapeAttribute fields
+        all_shape_fields = set(shape_parameters + shape_attributes)
 
-        # Update visibility for page2 fields
-        self.update_page_fields_visibility(self.page2_layout, always_visible_fields, specific_fields)
+        # Convert ShapeParameter and ShapeAttribute to JSON names
+        mapped_shape_fields = set(map_column_names(field, direction="to_json") for field in all_shape_fields)
+
+        # Convert self.column_names to JSON names for consistent comparison
+        mapped_column_names = set(map_column_names(col, direction="to_json") for col in self.column_names)
+
+        # Identify non-direct fields (fields not in direct column names)
+        non_direct_fields = mapped_shape_fields - mapped_column_names
+
+        # If tool_row is valid, fetch tool data for parameters and attributes
+        tool_parameters = {}
+        tool_attributes = {}
+        if tool_row != -1:
+            shape_parameter_item = self.table.item(tool_row, self.shape_parameter_col)
+            shape_attribute_item = self.table.item(tool_row, self.shape_attribute_col)
+
+            if shape_parameter_item and shape_attribute_item:
+                tool_parameters = json.loads(shape_parameter_item.text() or "{}")
+                tool_attributes = json.loads(shape_attribute_item.text() or "{}")
+
+        # Combine tool data
+        tool_data = {**tool_parameters, **tool_attributes}
+
+        # Populate the table widget
+        self.tableWidget.setRowCount(len(non_direct_fields))
+        self.tableWidget.setColumnCount(2)
+        self.tableWidget.setHorizontalHeaderLabels(["Field Name", "Value"])
+
+        self.tableWidget.itemClicked.connect(self.focus_value_field)
+
+        for row, field in enumerate(non_direct_fields):
+            # Convert JSON name to SQLite name and then to a human-readable format
+            json_field_name = map_column_names(field, direction="to_json")  # Convert to JSON format
+            human_readable_name = self.make_human_readable(json_field_name)  # Convert JSON name to human-readable
+
+            # Display human-readable name in the table
+            field_item = QTableWidgetItem(human_readable_name)
+            field_item.setFlags(field_item.flags() ^ Qt.ItemIsEditable)  # Make field name read-only
+            self.tableWidget.setItem(row, 0, field_item)
+
+            # Use tool data value if available, otherwise set as empty
+            value_item = QTableWidgetItem(tool_data.get(field, ""))
+            value_item.setFlags(value_item.flags() | Qt.ItemIsEditable)  # Ensure value field is editable
+            self.tableWidget.setItem(row, 1, value_item)
+
+    def focus_value_field(self, item):
+        """
+        Focus on the 'Value' field when a row is clicked. Skip editing if the cell is already being edited.
+
+        Args:
+            item (QTableWidgetItem): The clicked item in the table widget.
+        """
+        row = item.row()
+        column = 1  # Value column is the second column
+
+        # Get the item in the Value column
+        value_item = self.tableWidget.item(row, column)
+
+        if value_item is None:
+            return
+
+        # Check if the cell is already being edited
+        current_index = self.tableWidget.currentIndex()
+        if current_index.row() == row and current_index.column() == column and self.tableWidget.state() == QAbstractItemView.EditingState:
+            return
+
+        # Set focus and start editing
+        self.tableWidget.setCurrentCell(row, column)
+        self.tableWidget.editItem(value_item)  # Start editing the Value field
+
+        try:
+            # Get the item in the Value column
+            value_item = self.tableWidget.item(row, column)
+            if value_item is None:
+                return
+            # Set focus and start editing
+            self.tableWidget.setCurrentCell(row, column)
+            self.tableWidget.editItem(value_item)  # Start editing the Value field
+        finally:
+            # Reconnect the signal after execution
+            self.tableWidget.itemClicked.connect(self.focus_value_field)
+
 
     def update_page_fields_visibility(self, layout, always_visible_fields, specific_fields):
         """
@@ -633,13 +754,78 @@ class ToolDatabaseGUI(QMainWindow):
                         if label_widget:
                             label_widget.hide()
 
+
+    def format_field_logic(self, value, field_type):
+        """
+        Core logic for formatting field values based on their type.
+
+        Args:
+            value (str): The raw value to format.
+            field_type (str): The type of formatting to apply (e.g., 'dimension', 'angle').
+            config (dict): Configuration dictionary for precision settings.
+
+        Returns:
+            str: The formatted value.
+        """
+        try:
+            if field_type == "dimension":
+                if not value or value.strip().upper() == "N/A":
+                    return "N/A"
+
+                match = re.match(r"([\d\s./-]+)([a-zA-Z\"']*)", value.strip())
+                if match:
+                    number_str, unit = match.groups()
+
+                    # Handle mixed fractions with hyphen or space
+                    if "-" in number_str and "/" in number_str:
+                        parts = number_str.split("-")
+                        whole_number = float(parts[0])
+                        fraction_part = float(Fraction(parts[1]))
+                        number = whole_number + fraction_part
+                    elif " " in number_str and "/" in number_str:
+                        parts = number_str.split()
+                        whole_number = float(parts[0])
+                        fraction_part = float(Fraction(parts[1]))
+                        number = whole_number + fraction_part
+                    else:
+                        number = float(Fraction(number_str))
+
+                    if unit in ('', '"', 'in'):
+                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
+                        return f"{number:.{imperial_precision}f} in"
+                    elif unit.lower() in ('mm', 'millimeter'):
+                        metric_precision = config["tool_settings"].get("metric_precision", 3)
+                        return f"{number:.{metric_precision}f} mm"
+                    else:
+                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
+                        return f"{number:.{imperial_precision}f} in"
+
+            elif field_type == "angle":
+                # Format angle fields with configurable precision
+                angle_precision = config["tool_settings"].get("angle_precision", 4)
+                number = re.sub(r"[^\d.]", "", value)  # Remove all non-digit and non-decimal characters
+                if number:  # Ensure there is something to convert
+                    return f"{float(number):.{angle_precision}f} °"  # Apply precision
+                else:
+                    return f"{float(0):.{angle_precision}f} °"  # Apply precision
+
+            elif field_type == "rpm":
+                return f"{int(value):,}"
+
+            elif field_type == "number":
+                return re.sub(r"[^\d]", "", value)
+
+            return value  # Default return if no formatting applied
+
+        except Exception as e:
+            return f"Error: {e}"  # Return error message on failure
+
     def format_field(self, field_name):
         """
         Format the value of a form field based on its type.
 
-        Applies specific formatting rules for dimensions, angles, RPMs, or 
-        numbers based on the field's type. Handles units, precision, and 
-        validation dynamically.
+        Uses `format_field_logic` for core logic and applies the formatting
+        dynamically to form field widgets.
 
         Args:
             field_name (str): The name of the field to be formatted.
@@ -651,77 +837,24 @@ class ToolDatabaseGUI(QMainWindow):
             return  # Do nothing for empty inputs
 
         field_type = self.fields_to_format.get(field_name, "text")
+        formatted_value = self.format_field_logic(value, field_type)
 
-        try:
-            if field_type == "dimension":
-                # Normalize input and detect units for dimensions
-                if value.upper() == "N/A":
-                    widget.setText("N/A")  # Allow "N/A" as a valid input for dimensions
-                    return
+        widget.setText(formatted_value)
 
-                match = re.match(r"([\d.]+)\s*([a-zA-Z\"']*)", value)
-                if match:
-                    number_str, unit = match.groups()
-                    number = float(number_str)
+    def apply_field_format(self, value, field_type):
+        """
+        Apply formatting to a raw field value based on its type.
 
-                    # Handle recognized units
-                    if unit in ('', '"', 'in'):
-                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
-                        formatted_value = f"{number:.{imperial_precision}f} in"
-                    elif unit.lower() in ('mm', 'millimeter'):
-                        metric_precision = config["tool_settings"].get("metric_precision", 3)
-                        formatted_value = f"{number:.{metric_precision}f} mm"
-                    else:
-                        # For unrecognized units, strip invalid part and default to inches
-                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
-                        formatted_value = f"{number:.{imperial_precision}f} in"
+        Uses `format_field_logic` for core logic and returns the formatted value.
 
-                    widget.setText(formatted_value)
-                else:
-                    # If input doesn't match the expected pattern, clean the field
-                    number = re.sub(r"[^\d.]", "", value)  # Remove all non-numeric characters
-                    try:
-                        number = float(number)  # Attempt to convert to float
-                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
-                        formatted_value = f"{number:.{imperial_precision}f} in"  # Default to inches
-                        widget.setText(formatted_value)
-                    except ValueError:
-                        widget.clear()  # Clear field if conversion fails
+        Args:
+            value (str): The raw value to format.
+            field_type (str): The type of formatting to apply.
 
-            elif field_type == "angle":
-                # Format angle fields with configurable precision
-                angle_precision = config["tool_settings"].get("angle_precision", 4)
-                number = re.sub(r"[^\d.]", "", value)  # Remove all non-digit and non-decimal characters
-                if number:  # Ensure there is something to convert
-                    formatted_value = f"{float(number):.{angle_precision}f} °"  # Apply precision
-                    widget.setText(formatted_value)
-                else:
-                    widget.clear()  # Clear the field if it contains no valid number
-
-            elif field_type == "rpm":
-                # Format RPM fields
-                if value == "-1":
-                    widget.setText("-1")  # Allow -1 as a valid value
-                    return
-                number = re.sub(r"[^\d]", "", value)  # Remove all non-digit characters
-                if number:  # Ensure there is something to convert
-                    number = int(number)  # Convert the cleaned value to an integer
-                    formatted_value = f"{number:,}"  # Format with commas
-                    widget.setText(formatted_value)
-                else:
-                    widget.clear()  # Clear the field if it contains no valid number
-
-            elif field_type == "number":
-                if value.upper() == "N/A":
-                    widget.setText("N/A")  # Allow "N/A" as a valid input for dimensions
-                    return
-
-                # Ensure numeric input only
-                number = re.sub(r"[^\d]", "", value)  # Strip non-numeric characters
-                widget.setText(number)
-
-        except ValueError:
-            QMessageBox.warning(self, "Invalid Input", f"Invalid format for {field_name}. Please enter a valid number.")
+        Returns:
+            str: The formatted value.
+        """
+        return self.format_field_logic(value, field_type)
 
     def find_label_for_field(self, field_widget):
         """
@@ -742,26 +875,6 @@ class ToolDatabaseGUI(QMainWindow):
         label = self.find_label_in_layout(self.page2_layout, field_widget)
         return label
 
-    def fetch_unique_column_values(self, column_name):
-            """
-            Fetch unique values for a given column from the tools table.
-
-            Args:
-                column_name (str): The name of the column.
-
-            Returns:
-                list: A list of unique values.
-            """
-            try:
-                with sqlite3.connect(self.db.db_path) as connection:
-                    cursor = connection.cursor()
-                    query = f"SELECT DISTINCT {column_name} FROM tools WHERE {column_name} IS NOT NULL"
-                    cursor.execute(query)
-                    return [row[0] for row in cursor.fetchall()]
-            except sqlite3.Error as e:
-                QMessageBox.critical(self, "Database Error", f"Failed to fetch {column_name} values: {e}")
-                return []
-
     def create_filterable_combobox(self, column_name):
         """
         Create a FilterableComboBox for a specified database column.
@@ -773,7 +886,7 @@ class ToolDatabaseGUI(QMainWindow):
             FilterableComboBox: The populated combo box.
         """
         def get_items():
-            return self.fetch_unique_column_values(column_name)
+            return fetch_unique_column_values(column_name)
 
         combobox = FilterableComboBox(get_items_callback=get_items)
         combobox.setFixedWidth(500)
@@ -805,48 +918,45 @@ class ToolDatabaseGUI(QMainWindow):
         populates the table with the provided data.
 
         Args:
-            data (list of tuples, optional): Tool data to display in the table.
-            Each tuple represents a row of tool data. Defaults to None.
+            data (list of dicts, optional): Tool data to display in the table.
         """
         if data is None:
-            data, sql_columns = self.db.fetch_all()  # Fetch both data and column names
+            data, sql_columns = fetch_tool_data()  # Fetch data and columns dynamically
         else:
             sql_columns = self.column_names  # Assume provided data aligns with `self.column_names`
 
         # Columns to hide (but still load into the table)
         hidden_columns = {
-            "ToolImageFileName", "Chipload", "TipAngle", "CuttingEdgeAngle", "TipDiameter",
-            "TorusRadius", "ShaftDiameter", "SpindleDirection", "SpindlePower",
-            "BladeThickness", "CapDiameter", "CapHeight"
+            "ToolImageFileName", "ImageHash",  "ShapeParameter", "ShapeAttribute",
         }
 
-        # Columns that should not auto-resize
-        no_resize_list = {"Materials","AdditionalNotes", "ToolOrderURL"}
-
         # Set headers and populate the table
-        headers = [self.COLUMN_LABELS.get(col, col) for col in self.column_names]
+        headers = [self.COLUMN_LABELS.get(col, col) for col in sql_columns]
         self.table.setRowCount(len(data))
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
 
-        # Create a mapping of column indices
-        sql_column_index = {col: idx for idx, col in enumerate(sql_columns)}
-
-        # Populate the table
+        # Populate the table dynamically using column names
         for row_idx, row_data in enumerate(data):
-            for col_idx, col_name in enumerate(self.column_names):
-                value = row_data[sql_column_index[col_name]]
+            for col_idx, col_name in enumerate(sql_columns):
+                # Use the column name to map the value dynamically
+                value = row_data.get(col_name, None)
                 self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
 
+        # Map schema field names in hidden_columns to their corresponding labels
+        hidden_labels = {self.COLUMN_LABELS.get(col, col) for col in hidden_columns}
+
         # Hide specified columns
-        for col_idx, col_name in enumerate(self.column_names):
-            if col_name in hidden_columns:
+        for col_idx, col_name in enumerate(headers):  # Use headers derived from COLUMN_LABELS
+            if col_name in hidden_labels:
                 self.table.setColumnHidden(col_idx, True)
 
         # Adjust column widths
-        for col_idx, col_name in enumerate(self.column_names):
-            if col_name not in no_resize_list and col_name not in hidden_columns:
+        for col_idx, col_name in enumerate(headers):
+            if col_name not in hidden_labels:
                 self.table.resizeColumnToContents(col_idx)
+
+        self.initialize_column_indices()
 
     def load_tool_into_form(self, item):
         """
@@ -858,19 +968,22 @@ class ToolDatabaseGUI(QMainWindow):
         """
         row = item.row()
 
-        # Map column names to data for the selected row
+        # Get header labels and map them back to field names
+        header_labels = [self.table.horizontalHeaderItem(col).text() for col in range(self.table.columnCount())]
+        field_mapping = {label: field for field, label in self.COLUMN_LABELS.items() if label in header_labels}
+
+        # Extract row data using field names
         row_data = {
-            col_name: self.table.item(row, col_idx).text() if self.table.item(row, col_idx) else ""
-            for col_idx, col_name in enumerate(self.column_names)
+            field_mapping.get(label, label): self.table.item(row, col_idx).text() if self.table.item(row, col_idx) else ""
+            for col_idx, label in enumerate(header_labels)
         }
 
         # Populate the input fields dynamically
         for field_name, widget in self.tool_inputs.items():
             value = row_data.get(field_name, "")
 
-            # Check if the widget is a container with a layout
             if widget.layout():
-                # Try to get the first widget in the layout (e.g., QLineEdit for custom widgets)
+                # Handle custom widgets with layouts
                 inner_widget = widget.layout().itemAt(0).widget() if widget.layout().count() > 0 else None
                 if isinstance(inner_widget, QLineEdit):
                     inner_widget.setText(value)
@@ -887,9 +1000,15 @@ class ToolDatabaseGUI(QMainWindow):
                 elif isinstance(widget, QComboBox):
                     widget.setCurrentText(value)
 
+
+        # Track the original shape
+        if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
+            self.original_shape = self.tool_inputs["Shape"].currentText()
+
         # Set the button to "Update" mode
         self.set_update_button_mode(is_edit_mode=True)
-        self.update_fields_visibility()
+        self.update_table_with_non_direct_fields(row)
+
 
     def search_tools(self):
         """Start the debounce timer for search."""
@@ -899,45 +1018,91 @@ class ToolDatabaseGUI(QMainWindow):
         """Perform the actual search operation."""
         keyword = self.search_input.text().strip()
         if keyword:
-            filtered_data, _ = self.db.fetch_filtered(keyword)  # Assume fetch_filtered handles searching
+            filtered_data, _ = fetch_filtered(keyword)  # Assume fetch_filtered handles searching
             self.load_data(filtered_data)
         else:
             self.load_data()  # Load all data when the input is empty
 
     def get_form_data(self):
         """
-        Retrieve data from all form fields in the order defined by `self.column_names`.
+        Retrieve data from all form fields as a dictionary aligned with `self.column_names`.
+        Additionally, retrieve ShapeParameter and ShapeAttribute data from the tableWidget.
 
         Returns:
-            list: A list containing the values from all input fields, aligned with `self.column_names`.
+            dict: A dictionary containing:
+                - Direct fields from form inputs, keyed by column names.
+                - ShapeParameter and ShapeAttribute, each as a separate dictionary.
         """
-        data = []
-        for column in self.column_names:  # Use dynamic column names to ensure correct order
+        data = {}
+        shape_parameters = {}
+        shape_attributes = {}
+
+        # Step 1: Fetch shape data once
+        shape_name = self.tool_inputs["Shape"].currentText()
+        shape_data = fetch_shapes(shape_name)
+
+        if shape_data:
+            shape_parameters_list = json.loads(shape_data.ShapeParameter or "[]")
+            shape_attributes_list = json.loads(shape_data.ShapeAttribute or "[]")
+        else:
+            print(f"Error: Shape data not found for shape: {shape_name}")
+            shape_parameters_list = []
+            shape_attributes_list = []
+
+        # Step 2: Loop through column names and populate data
+        for column in self.column_names:
             widget = self.tool_inputs.get(column)
+
+            # Handle special fields: ShapeParameter and ShapeAttribute
+            if column == "ShapeParameter" or column == "ShapeAttribute":
+                # Retrieve non-direct fields from the tableWidget
+                for row in range(self.tableWidget.rowCount()):
+                    field_item = self.tableWidget.item(row, 0)  # Field Name column
+                    value_item = self.tableWidget.item(row, 1)  # Value column
+
+                    if field_item and value_item:
+                        sqlite_field_name = field_item.text()
+                        json_field_name = self.make_machine_readable(sqlite_field_name)
+                        # json_field_name = map_column_names(sqlite_field_name, direction="to_json")  # Convert to JSON key
+                        value = value_item.text().strip()
+
+                        # Classify the field into ShapeParameter or ShapeAttribute
+                        if json_field_name in shape_parameters_list:
+                            shape_parameters[json_field_name] = value
+                        elif json_field_name in shape_attributes_list:
+                            shape_attributes[json_field_name] = value
+
+                # Skip to avoid duplicate processing
+                continue
+
+            # Handle non-special fields
             if not widget:
-                data.append(None)  # Handle missing widgets gracefully
+                data[column] = None  # Handle missing widgets gracefully
                 continue
 
             # Check if the widget is a container with a layout
             if widget.layout():
-                # Retrieve the first widget in the layout (e.g., QLineEdit for custom widgets)
                 inner_widget = widget.layout().itemAt(0).widget() if widget.layout().count() > 0 else None
                 if isinstance(inner_widget, QLineEdit):
-                    data.append(inner_widget.text().strip())  # Retrieve the text from QLineEdit
+                    data[column] = inner_widget.text().strip()
                 elif isinstance(inner_widget, QTextEdit):
-                    data.append(inner_widget.toPlainText().strip())  # Retrieve the text from QTextEdit
+                    data[column] = inner_widget.toPlainText().strip()
                 else:
-                    data.append(None)  # Unsupported or unrecognized widget
+                    data[column] = None  # Unsupported or unrecognized widget
             else:
                 # Handle standard widgets directly
                 if isinstance(widget, QLineEdit):
-                    data.append(widget.text().strip())
+                    data[column] = widget.text().strip()
                 elif isinstance(widget, QTextEdit):
-                    data.append(widget.toPlainText().strip())
+                    data[column] = widget.toPlainText().strip()
                 elif isinstance(widget, QComboBox):
-                    data.append(widget.currentText().strip() if widget.currentText() else None)
+                    data[column] = widget.currentText().strip() if widget.currentText() else None
                 else:
-                    data.append(None)  # Unsupported or unrecognized widget
+                    data[column] = None  # Unsupported or unrecognized widget
+
+        # Step 3: Serialize ShapeParameter and ShapeAttribute
+        data["ShapeParameter"] = json.dumps(shape_parameters) if shape_parameters else None
+        data["ShapeAttribute"] = json.dumps(shape_attributes) if shape_attributes else None
 
         return data
 
@@ -971,9 +1136,10 @@ class ToolDatabaseGUI(QMainWindow):
             # Set default for Shape field
             if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
                 self.tool_inputs["Shape"].setCurrentText("endmill.fcstd")
+                self.original_shape = None
 
             # Update visibility for fields based on default Shape
-            self.update_fields_visibility()
+            self.update_table_with_non_direct_fields(-1)
 
             # Set the button to "Save" mode
             self.set_update_button_mode(is_edit_mode=False)
@@ -982,6 +1148,26 @@ class ToolDatabaseGUI(QMainWindow):
                 QMessageBox.information(self, "Add Tool", "Fields cleared. You can now add a new tool.")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
+
+    def on_shape_changed(self):
+        """
+        Handle changes to the Shape field.
+
+        If the Shape changes to a new type, clears dependent fields.
+        If it reverts to the original type, reloads data for that shape.
+        """
+        new_shape = self.tool_inputs["Shape"].currentText()
+
+        # Compare new shape with the original
+        if new_shape == self.original_shape:
+            # Reload data for the original Shape
+            current_row = self.table.currentRow()
+            if current_row >= 0:
+                self.update_table_with_non_direct_fields(current_row)
+        else:
+            # Clear dependent fields and non-direct fields table
+            #self.clear_dependent_fields()
+            self.update_table_with_non_direct_fields(-1)  # Clear the table
 
     def update_tool(self):
         """
@@ -992,65 +1178,65 @@ class ToolDatabaseGUI(QMainWindow):
         the tool to the wiki if applicable.
         """
         progress = None
-        try:
-            tool_number = self.get_field_text("ToolNumber")
-            if not tool_number:
-                raise ValueError("ToolNumber is required.")
+        #try:
+        tool_number = self.get_field_text("ToolNumber")
+        if not tool_number:
+            raise ValueError("ToolNumber is required.")
 
-            # Initialize progress dialog
-            progress = QProgressDialog(self)
-            progress.setWindowTitle("Processing")
-            progress.setLabelText("Saving tool data...")
-            progress.setCancelButton(None)  # Remove cancel button if unnecessary
-            progress.setMinimumSize(300, 100)
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setRange(0, 100)  # Indeterminate spinner
-            progress.show()
+        # Initialize progress dialog
+        progress = QProgressDialog(self)
+        progress.setWindowTitle("Processing")
+        progress.setLabelText("Saving tool data...")
+        progress.setCancelButton(None)  # Remove cancel button if unnecessary
+        progress.setMinimumSize(300, 100)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setRange(0, 100)  # Indeterminate spinner
+        progress.show()
 
-            QApplication.processEvents()  # Ensure dialog updates
-            time.sleep(0.05)  # Add a short delay
-            progress.setValue(0)
+        QApplication.processEvents()  # Ensure dialog updates
+        time.sleep(0.05)  # Add a short delay
+        progress.setValue(0)
+        QApplication.processEvents()
+
+        # Perform save and publish operations
+        all_data, columns = fetch_tool_data()
+        existing_tool_numbers = [str(row["ToolNumber"]) for row in all_data]  # Access by key
+        data = self.get_form_data()
+        operation_type = "updated" if tool_number in existing_tool_numbers else "added"
+
+        if operation_type == "updated":
+            update(tool_number, data)
+        else:
+            insert(data)
+
+        progress.setLabelText("Publishing tool to the wiki...")
+        QApplication.processEvents()  # Ensure dialog updates
+        time.sleep(0.05)  # Add a short delay
+        progress.setValue(0)
+        QApplication.processEvents()
+
+        # Define a progress update callback
+        def progress_update(percentage):
+            progress.setValue(percentage)
             QApplication.processEvents()
 
-            # Perform save and publish operations
-            all_data, columns = self.db.fetch_all()
-            existing_tool_numbers = [str(row[columns.index("ToolNumber")]) for row in all_data]
-            data = self.get_form_data()
-            operation_type = "updated" if tool_number in existing_tool_numbers else "added"
+        # Perform the publishing operation with progress updates
+        result = wiki_main(tool_number=int(tool_number), progress_callback=progress_update)
 
-            if operation_type == "updated":
-                self.db.update(tool_number, data[1:])
-            else:
-                self.db.insert(data)
+        if result["status"] == "success":
+            QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and published to the wiki!")
+        else:
+            QMessageBox.warning(self, "Partial Success", f"Tool {tool_number} {operation_type}, but failed to publish to the wiki.")
 
-            progress.setLabelText("Publishing tool to the wiki...")
-            QApplication.processEvents()  # Ensure dialog updates
-            time.sleep(0.05)  # Add a short delay
-            progress.setValue(0)
-            QApplication.processEvents()
+        self.set_update_button_mode(is_edit_mode=True)
+        self.load_data()
 
-            # Define a progress update callback
-            def progress_update(percentage):
-                progress.setValue(percentage)
-                QApplication.processEvents()
-
-            # Perform the publishing operation with progress updates
-            result = wiki_main(tool_number=int(tool_number), progress_callback=progress_update)
-
-            if result["status"] == "success":
-                QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and published to the wiki!")
-            else:
-                QMessageBox.warning(self, "Partial Success", f"Tool {tool_number} {operation_type}, but failed to publish to the wiki.")
-
-            self.set_update_button_mode(is_edit_mode=True)
-            self.load_data()
-
-        except sqlite3.Error as db_error:
-            QMessageBox.critical(self, "Database Error", f"Failed to {operation_type} tool {tool_number}: {db_error}")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+    # except sqlite3.Error as db_error:
+    #     QMessageBox.critical(self, "Database Error", f"Failed to {operation_type} tool {tool_number}: {db_error}")
+    # except Exception as e:
+    #     QMessageBox.critical(self, "Error", str(e))
         if progress:
-            progress.close()
+                progress.close()
 
     def publish_all_tools(self):
         """
@@ -1158,7 +1344,7 @@ class ToolDatabaseGUI(QMainWindow):
                 QApplication.processEvents()
 
                 # Perform database deletion
-                self.db.delete(tool_number)
+                delete(tool_number)
 
                 # Extract credentials and session
                 api_url = 'https://wiki.knoxmakers.org/api.php'
@@ -1193,13 +1379,13 @@ class ToolDatabaseGUI(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to delete the associated image: {str(e)}")
 
-                # Always update the index page
+                #Always update the index page
                 progress.setLabelText("Updating the index page...")
                 progress.setValue(3)
                 QApplication.processEvents()
                 try:
-                    index_page_content = generate_index_page_content(self.db.db_path)
-                    generate_tools_json(self.db.db_path)
+                    index_page_content = generate_index_page_content()
+                    generate_tools_json()
                     upload_wiki_page(session, api_url, "Nibblerbot/tools", index_page_content)
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to update the index page: {str(e)}")
@@ -1224,7 +1410,7 @@ class ToolDatabaseGUI(QMainWindow):
         Set the text of the update button dynamically.
 
         Args:
-            is_edit_mode (bool): If True, sets the button to "Update" mode. 
+            is_edit_mode (bool): If True, sets the button to "Update" mode.
                                  If False, sets it to "Save" mode.
         """
         self.update_button.setText("Save" if not is_edit_mode else "Update")
@@ -1266,8 +1452,6 @@ class SplashScreen(QWidget):
         self.setLayout(layout)
 
         center_window(self)
-
-
 
 if __name__ == "__main__":
     app = QApplication([])

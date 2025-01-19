@@ -10,6 +10,7 @@ import json
 from fractions import Fraction
 import re
 from settings import load_config
+from db_utils import *
 
 # Load the configuration
 config = load_config()
@@ -20,7 +21,6 @@ wiki_password = config["wiki_credentials"]["password"]
 bits_file_location = config["file_paths"]["bits_file_location"]
 library_file_location = config["file_paths"]["library_file_location"]
 qr_images_location = config["file_paths"]["qr_images_location"]
-database_path = config["file_paths"]["database_path"]
 
 def sanitize_filename(name):
     """
@@ -117,6 +117,52 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
     except ValueError:
         return value  # If invalid format, return as-is
 
+def extract_numeric_value_with_unit(value):
+    """
+    Extract the numeric part and unit from a value.
+
+    Handles formats like:
+    - "12.34 in", "45.67mm", "89.01\""
+    - Returns a tuple (float, str) where the float is the numeric part,
+      and the string is the detected unit (defaulting to "in" if not found).
+
+    Args:
+        value (str): The input value as a string.
+
+    Returns:
+        tuple: (numeric_value: float, unit: str)
+    """
+    if not value or not isinstance(value, str):
+        return 0.0, "in"  # Default to inches if invalid
+
+    # Match numeric part and optional unit
+    match = re.match(r"^([\d\.]+)\s*([a-zA-Z\"']*)$", value.strip())
+    if match:
+        numeric_value = float(match.group(1))
+        unit = match.group(2).strip() or "in"  # Default to inches if no unit
+        return numeric_value, unit
+    return 0.0, "in"  # Default to 0.0 inches if parsing fails
+
+def convert_to_original_unit(value, unit):
+    """
+    Convert a value to its original unit.
+
+    Supports conversion between millimeters (mm) and inches (in).
+
+    Args:
+        value (float): The numeric value to convert.
+        unit (str): The target unit ("mm" or "in").
+
+    Returns:
+        str: The converted value with the original unit appended.
+    """
+    if unit == "mm":
+        return f"{value * 25.4:.3f} mm"  # Inches to millimeters
+    elif unit == "in":
+        return f"{value:.4f} in"  # Keep in inches
+    else:
+        return f"{value:.4f} {unit}"  # Default for unknown units
+
 def map_tool_to_json(tool, columns):
     """
     Map tool data from the database to a JSON structure.
@@ -125,81 +171,108 @@ def map_tool_to_json(tool, columns):
     and required parameters.
 
     Args:
-        tool (tuple): A tuple representing the tool data from the database.
+        tool (dict): A dictionary representing the tool data from the database.
         columns (list): A list of column names corresponding to the tool data.
 
     Returns:
         dict: A dictionary in JSON format representing the tool.
     """
-    tool_data_dict = dict(zip(columns, tool))  # Dynamic mapping
+    # Use tool directly as a dictionary
+    tool_data_dict = tool
 
+    # Extract shape name
+    shape_name = tool_data_dict.get("Shape", "unknown")
+
+    # Prepare JSON structure
     json_data = {
         "version": 2,
         "name": tool_data_dict.get("ToolName", "Unnamed Tool"),
-        "shape": tool_data_dict.get("Shape", "unknown"),  # Correctly mapped
+        "shape": shape_name,
         "parameter": {},
         "attribute": {}
     }
 
-    # Define parameters based on tool shapes
-    shape_parameters = {
-        "drill.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "Material", "TipAngle", "Stickout"],
-        "endmill.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "CuttingEdgeHeight", "Material", "ShankDiameter", "SpindleDirection", "Stickout"],
-        "ballend.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeHeight", "Length", "Material", "ShankDiameter", "Stickout"],
-        "v-bit.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeAngle", "CuttingEdgeHeight", "Length", "Material", "ShankDiameter", "TipDiameter", "Stickout"],
-        "torus.fcstd": ["Chipload", "Diameter", "Flutes", "CuttingEdgeHeight", "TorusRadius", "Length", "Material", "ShankDiameter", "Stickout"],
-        "slittingsaw.fcstd": ["Chipload", "Diameter", "BladeThickness", "CapDiameter", "CapHeight", "Material", "ShankDiameter"],
-        "probe.fcstd": ["Diameter", "Length", "ShaftDiameter", "SpindlePower"],
-        "roundover.fcstd": ["Chipload", "Diameter", "Flutes", "Length", "Material", "CuttingRadius","CuttingEdgeHeight", "ShankDiameter", "TipDiameter","Chipload", "Stickout"],
-    }
+    # Fetch shape parameters and attributes using fetch_shapes
+    shape_data = fetch_shapes(shape_name)
+    if not shape_data:
+        print(f"Shape '{shape_name}' not found in FCShapes.")
+        json_data["parameter"] = {"Shape": shape_name}  # Fallback parameter
+        json_data["attribute"] = {}
+        return json_data
 
-    shape = tool_data_dict.get("Shape", "unknown")
+    # Parse ShapeParameter and ShapeAttribute from the database
+    shape_parameters_list = json.loads(shape_data.ShapeParameter or "[]")
+    shape_attributes_list = json.loads(shape_data.ShapeAttribute or "[]")
 
-    # Map parameters based on shape
-    if shape in shape_parameters:
-        for param in shape_parameters[shape]:
-            db_param = map_sqlite_column_to_json_param(param)
-            value = tool_data_dict.get(db_param, None)
-            json_data["parameter"][param] = value
+    # Retrieve JSON values stored in the database
+    shape_parameters_values = json.loads(tool_data_dict.get("ShapeParameter", "{}") or "{}")
+    shape_attributes_values = json.loads(tool_data_dict.get("ShapeAttribute", "{}") or "{}")
+
+    # Special case: Handle bullnose.fcstd shape
+    if shape_name == "bullnose.fcstd":
+        try:
+            # Extract numeric values and units
+            diameter, diameter_unit = extract_numeric_value_with_unit(tool_data_dict.get("ToolDiameter", "0"))
+            nose_radius_value = shape_parameters_values.get("NoseRadius", "0")
+            nose_radius, nose_radius_unit = extract_numeric_value_with_unit(nose_radius_value)
+
+            # Ensure both units are consistent
+            if diameter_unit != nose_radius_unit:
+                raise ValueError(f"Unit mismatch: {diameter_unit} vs {nose_radius_unit}")
+
+            # Calculate FlatRadius
+            flat_radius = (diameter / 2) - nose_radius
+            json_data["parameter"]["FlatRadius"] = convert_to_original_unit(flat_radius, diameter_unit)
+        except (ValueError, TypeError) as e:
+            print(f"Invalid data for calculating FlatRadius: {e}")
+
+    # Populate parameters: Iterate through the list and exclude NoseRadius if present
+    for param in shape_parameters_list:
+        if param == "NoseRadius" and shape_name == "bullnose.fcstd":
+            # Skip NoseRadius for bullnose.fcstd
+            continue
+
+        db_param = map_column_names(param, direction="to_sqlite")  # Convert to SQLite name for direct fields
+        value = tool_data_dict.get(db_param, shape_parameters_values.get(param, None))
+        json_data["parameter"][param] = value
+
+    # Populate attributes: Prioritize direct fields
+    for attr in shape_attributes_list:
+        db_attr = map_column_names(attr, direction="to_sqlite")  # Convert to SQLite name for direct fields
+        value = tool_data_dict.get(db_attr, shape_attributes_values.get(attr, None))
+        json_data["attribute"][attr] = value
 
     return json_data
 
-def map_sqlite_column_to_json_param(param):
+def map_column_names(param, direction="to_json"):
     """
-    Map SQLite column names to JSON parameter names.
-
-    Provides a mapping between database field names and the corresponding
-    JSON parameter names for consistent formatting.
+    Map column names between SQLite and JSON parameter names.
 
     Args:
-        param (str): The SQLite column name to map.
+        param (str): The column name to map.
+        direction (str): The mapping direction:
+                         - "to_json" for SQLite-to-JSON mapping.
+                         - "to_sqlite" for JSON-to-SQLite mapping.
 
     Returns:
-        str: The corresponding JSON parameter name, or the original param
-             if no mapping exists.
+        str: The corresponding mapped name, or the original param if no mapping exists.
     """
     mapping = {
         "Diameter": "ToolDiameter",
-        "Flutes": "Flutes",
         "Length": "OAL",
         "CuttingEdgeHeight": "LOC",
         "Material": "ToolMaterial",
         "ShankDiameter": "ToolShankSize",
-        "TipAngle": "TipAngle",
-        "CuttingEdgeAngle": "CuttingEdgeAngle",
-        "TipDiameter": "TipDiameter",
-        "TorusRadius": "TorusRadius",
-        "BladeThickness": "BladeThickness",
-        "CapDiameter": "CapDiameter",
-        "CapHeight": "CapHeight",
-        "ShaftDiameter": "ShaftDiameter",
-        "SpindlePower": "SpindlePower",
-        "SpindleDirection": "SpindleDirection",
-        "Shape": "Shape",
-        "Stickout": "Stickout",
-        "CuttingRadius": "CuttingRadius",
     }
-    return mapping.get(param, param)
+
+    if direction == "to_sqlite":
+        return mapping.get(param, param)
+    elif direction == "to_json":
+        reverse_mapping = {v: k for k, v in mapping.items()}
+        return reverse_mapping.get(param, param)
+    else:
+        raise ValueError(f"Invalid direction: {direction}. Use 'to_json' or 'to_sqlite'.")
+
 
 def generate_json_files(tool_data, columns, output_directory):
     """
@@ -250,64 +323,29 @@ def get_image_hash(file_path):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
-def update_image_hash(database_path, tool_number, image_hash):
-    """
-    Update the image hash for a specific tool in the database.
-
-    Ensures that the database reflects the current hash of the associated tool image.
-
-    Args:
-        database_path (str): Path to the SQLite database.
-        tool_number (int): The tool number whose image hash is being updated.
-        image_hash (str): The new SHA-256 hash of the tool's image.
-
-    Returns:
-        None
-    """
-    connection = sqlite3.connect(database_path)
-    cursor = connection.cursor()
-    cursor.execute("UPDATE tools SET ImageHash = ? WHERE ToolNumber = ?", (image_hash, tool_number))
-    connection.commit()
-    connection.close()
-
-def generate_index_page_content(database_path):
+def generate_index_page_content():
     """
     Generate the main index page content for all tools with their numbers and names.
-
-    Retrieves tool data from the database and formats it into wiki-style links
-    for the index page.
-
-    Args:
-        database_path (str): Path to the SQLite database.
 
     Returns:
         str: The formatted wiki content for the index page.
     """
-    connection = sqlite3.connect(database_path)
-    cursor = connection.cursor()
-
-    # Fetch both ToolNumber and ToolName from the database
-    cursor.execute("SELECT ToolNumber, ToolName FROM tools ORDER BY ToolNumber")
-    tools = cursor.fetchall()
-    connection.close()
+    # Fetch tool numbers and names
+    tools = fetch_tool_numbers_and_details()
 
     # Get index page and prefix from configuration
     index_page = config["wiki_settings"]["index_page"]
     page_prefix = config["wiki_settings"]["page_prefix"]
 
     # Generate links with exact spacing
-    links = [f"[[{index_page}/{page_prefix} {tool[0]}|Tool {tool[0]} - {tool[1]}]]<br>" for tool in tools]
+    links = [f"[[{index_page}/{page_prefix} {tool['ToolNumber']}|Tool {tool['ToolNumber']} - {tool['ToolName']}]]<br>" for tool in tools]
     return "\n".join(links)
 
-def generate_tools_json(database_path, output_path=None):
+def generate_tools_json(output_path=None):
     """
     Generate a JSON file containing tool numbers and paths to their .fctb files.
 
-    Creates a JSON structure where each tool is listed with its number and a
-    sanitized path to its corresponding .fctb file.
-
     Args:
-        database_path (str): Path to the SQLite database.
         output_path (str, optional): Path to save the generated JSON file.
                                      Defaults to the library file location in config.
 
@@ -316,24 +354,17 @@ def generate_tools_json(database_path, output_path=None):
     """
     output_path = output_path or config["file_paths"]["library_file_location"]
 
-    connection = sqlite3.connect(database_path)
-    cursor = connection.cursor()
-
-    # Query for tool numbers and corresponding tool names
-    cursor.execute("SELECT ToolNumber, ToolName FROM tools")
-    tools = cursor.fetchall()
+    # Fetch tool numbers and names
+    tools = fetch_tool_numbers_and_details()
 
     # Create the JSON structure
     tools_data = {"tools": [], "version": 1}
-    for tool_number, tool_name in tools:
+    for tool in tools:
+        tool_name = tool["ToolName"]
         if tool_name:  # Ensure the tool has a name
-            # Derive the file name using the sanitize_filename function
             sanitized_name = sanitize_filename(tool_name)
             file_path = f"{sanitized_name}.fctb"
-
-            tools_data["tools"].append({"nr": tool_number, "path": file_path})
-
-    connection.close()
+            tools_data["tools"].append({"nr": tool["ToolNumber"], "path": file_path})
 
     # Write to the output file
     with open(output_path, "w") as json_file:
@@ -413,19 +444,15 @@ def upload_image(session, api_url, file_path, file_name):
         response = session.post(api_url, files=files, data=data)
         return response.json()
 
-def upload_image_if_changed(session, api_url, file_path, file_name, database_path, tool_number):
+def upload_image_if_changed(session, api_url, file_path, file_name, tool_number):
     """
     Upload an image to MediaWiki only if it has changed and the file exists.
-
-    Compares the hash of the current image file with the hash stored in the
-    database. If they differ, uploads the image and updates the stored hash.
 
     Args:
         session (requests.Session): The authenticated session for MediaWiki API.
         api_url (str): The API endpoint URL for the MediaWiki instance.
         file_path (str): Path to the image file to check and upload.
         file_name (str): Name of the file on the wiki.
-        database_path (str): Path to the SQLite database.
         tool_number (int): The tool number associated with the image.
 
     Returns:
@@ -439,26 +466,19 @@ def upload_image_if_changed(session, api_url, file_path, file_name, database_pat
     # Compute the current hash of the image
     current_hash = get_image_hash(file_path)
 
-    # Connect to the database and fetch the stored hash
-    connection = sqlite3.connect(database_path)
-    cursor = connection.cursor()
-    cursor.execute("SELECT ImageHash FROM tools WHERE ToolNumber = ?", (tool_number,))
-    result = cursor.fetchone()
-    stored_hash = result[0] if result else None
+    # Fetch the stored hash
+    stored_hash = fetch_image_hash(tool_number)
 
     # Compare hashes and upload if they differ
     if current_hash != stored_hash:
         response = upload_image(session, api_url, file_path, file_name)
         if response.get("upload", {}).get("result") == "Success":
-            update_image_hash(database_path, tool_number, current_hash)
+            update_image_hash(tool_number, current_hash)
             print(f"Image {file_name} uploaded and hash updated.")
         else:
             print(f"Failed to upload image {file_name}: {response}")
     else:
         print(f"Image {file_name} unchanged. No upload needed.")
-
-    # Close the database connection
-    connection.close()
 
 def upload_wiki_page(session, api_url, page_title, content):
     """
@@ -492,39 +512,6 @@ def upload_wiki_page(session, api_url, page_title, content):
     })
     return response.json()
 
-def fetch_tool_data(database_path, tool_number=None):
-    """
-    Fetch tool data from the SQLite database.
-
-    Retrieves all tool data or data for a specific tool number, including
-    column names for mapping.
-
-    Args:
-        database_path (str): Path to the SQLite database.
-        tool_number (int, optional): The tool number to fetch. If None, fetches all tools.
-
-    Returns:
-        tuple: A tuple containing:
-            - list of sqlite3.Row: Tool data rows.
-            - list of str: Column names corresponding to the data.
-    """
-    connection = sqlite3.connect(database_path)
-    connection.row_factory = sqlite3.Row  # Allows retrieval by column names
-    cursor = connection.cursor()
-
-    if tool_number:
-        cursor.execute("SELECT * FROM tools WHERE ToolNumber = ?", (tool_number,))
-        result = cursor.fetchall()
-    else:
-        cursor.execute("SELECT * FROM tools")
-        result = cursor.fetchall()
-
-    # Get column names dynamically
-    column_names = [description[0] for description in cursor.description]
-
-    connection.close()
-    return result, column_names
-
 def generate_qr_code(tool_number, base_url=None):
     """
     Generate a QR code for a tool and save it as a PNG file.
@@ -540,7 +527,7 @@ def generate_qr_code(tool_number, base_url=None):
     Returns:
         str: The file path of the saved QR code.
     """
-    base_url = base_url or config["wiki_settings"].get("index_page", "")
+    base_url = base_url or config["qr_code_settings"].get("base_url", "")
     qr_data = f"{base_url}/tool_{tool_number}"
     qr_file_name = os.path.join(config["file_paths"]["qr_images_location"], f"tool_{tool_number}_qr.png")
 
@@ -572,7 +559,6 @@ def generate_qr_code(tool_number, base_url=None):
         file.write(new_data)
     print(f"QR code saved as {qr_file_name}")
     return qr_file_name
-
 
 def delete_wiki_item(session, api_url, title, is_media=False):
     """
@@ -669,16 +655,6 @@ def protect_wiki_page(session, api_url, page_title):
 def generate_wiki_page(tool_data):
     """
     Generate wiki page content for a tool using the provided data.
-
-    Constructs the content for a tool's wiki page based on the predefined
-    template and populates it with tool-specific details.
-
-    Args:
-        tool_data (list): A list of tool data fields corresponding to placeholders
-                          in the template.
-
-    Returns:
-        str: The formatted wiki page content as a string.
     """
     template = """
 [[Nibblerbot/tools|Back to Tool Library]]
@@ -694,7 +670,7 @@ def generate_wiki_page(tool_data):
 | '''Shank Size''' || [ToolShankSize]
 |-
 | '''Diameter''' || [ToolDiameter]
-|-
+[INSERT_NOSERADIUS][INSERT_CUTTINGRADIUS]|-
 | '''Flutes (FL)''' || [Flutes]
 |-
 | '''Overall Length (OAL)''' || [OAL]
@@ -727,6 +703,25 @@ def generate_wiki_page(tool_data):
 ==Additional Notes==
 [AdditionalNotes]"""
 
+    # Parse ShapeParameter from tool_data
+    shape_parameters = json.loads(tool_data.get("ShapeParameter", "{}") or "{}")
+
+    # Add NoseRadius if present and format it
+    nose_radius = shape_parameters.get("NoseRadius")
+    if nose_radius:
+        formatted_nose_radius = format_measurement(nose_radius, convert_to_fraction=True, add_quotes=True)
+        nose_radius_row = f"|-\n| '''Nose Radius''' || {formatted_nose_radius}\n"
+    else:
+        nose_radius_row = ""
+
+    # Add CuttingRadius if present and format it
+    cutting_radius = shape_parameters.get("CuttingRadius")
+    if cutting_radius:
+        formatted_cutting_radius = format_measurement(cutting_radius, convert_to_fraction=True, add_quotes=True)
+        cutting_radius_row = f"|-\n| '''Cutting Radius''' || {formatted_cutting_radius}\n"
+    else:
+        cutting_radius_row = ""
+
     placeholders = [
         "ToolNumber", "ToolName", "ToolType", "ToolShankSize", "Flutes", "OAL", "LOC",
         "ToolMaxRPM", "ToolDiameter", "ToolMaterial", "ToolCoating", "PartNumber",
@@ -735,22 +730,28 @@ def generate_wiki_page(tool_data):
     ]
 
     page_content = template
-    for i, field in enumerate(placeholders):
-        value = tool_data[i]
+
+    # Replace placeholders in the template
+    page_content = page_content.replace("[INSERT_NOSERADIUS]", nose_radius_row)
+    page_content = page_content.replace("[INSERT_CUTTINGRADIUS]", cutting_radius_row)
+
+    for field in placeholders:
+        value = tool_data.get(field, None)  # Access value using dictionary key
+
+        # Handle specific formatting for certain fields
         if field == "ToolMaxRPM":
-            formatted_value = "N/A" if str(value) == "-1" else str(value)
-            page_content = page_content.replace(f"[{field}]", formatted_value)
+            formatted_value = "N/A" if str(value) == "-1" else f"{int(value):,}"
         elif field in ["ToolShankSize", "ToolDiameter"]:
             formatted_value = format_measurement(value, convert_to_fraction=True, add_quotes=True)
-            page_content = page_content.replace(f"[{field}]", formatted_value)
         elif field in ["OAL", "LOC"]:
             formatted_value = format_measurement(value, add_quotes=True)
-            page_content = page_content.replace(f"[{field}]", formatted_value)
         elif field == "ToolImageFileName":
-            image_file = str(value) if value else f"tool_{tool_data[0]}.png"
-            page_content = page_content.replace(f"[{field}]", image_file)
+            formatted_value = str(value) if value else f"tool_{tool_data.get('ToolNumber', 'unknown')}.png"
         else:
-            page_content = page_content.replace(f"[{field}]", str(value) if value else "N/A")
+            formatted_value = str(value) if value else "N/A"
+
+        # Replace the placeholder in the page content
+        page_content = page_content.replace(f"[{field}]", formatted_value)
 
     return page_content
 
@@ -775,7 +776,6 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     api_url = config["wiki_settings"]["api_url"]
     username = config["wiki_credentials"]["username"]
     password = config["wiki_credentials"]["password"]
-    database_path = config["file_paths"]["database_path"]
     output_directory = config["file_paths"]["bits_file_location"]
 
     session = create_session(api_url, username, password)
@@ -783,52 +783,52 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     if return_session:
         return session
 
-    try:
-        if tool_number is None:
-            # Process all tools
-            tool_data, columns = fetch_tool_data(database_path)
-        else:
-            # Process a specific tool
-            tool_data, columns = fetch_tool_data(database_path, tool_number)
+    # try:
+    if tool_number is None:
+        # Process all tools
+        tool_data, columns = fetch_tool_data()
+    else:
+        # Process a specific tool
+        tool_data, columns = fetch_tool_data(tool_number=tool_number)
 
-        total_tools = len(tool_data)
-        for idx, tool in enumerate(tool_data):
-            # Calculate and send progress
-            if progress_callback:
-                percentage = int((idx + 1) / total_tools * 90)
-                progress_callback(percentage)
-
-            # Generate JSON files for tools
-            generate_json_files([tool], columns, output_directory)
-
-            # Publish tool to the wiki
-            tool_number = tool[0]
-            wiki_content = generate_wiki_page(tool)
-            page_title = f"{config['wiki_settings']['index_page']}/{config['wiki_settings']['page_prefix']}_{tool_number}"
-            upload_response = upload_wiki_page(session, api_url, page_title, wiki_content)
-
-            # Handle image upload if needed
-            image_file_name = tool[19] if tool[19] else f"tool_{tool_number}.png"
-            image_file_path = os.path.join(config["file_paths"]["bit_images"], image_file_name)
-
-            if os.path.exists(image_file_path):
-                upload_image_if_changed(session, api_url, image_file_path, image_file_name, database_path, tool_number)
-
-            # Generate QR code
-            generate_qr_code(tool_number)
-
-        # Update the index page
-        index_page_content = generate_index_page_content(database_path)
-        upload_wiki_page(session, api_url, config["wiki_settings"]["index_page"], index_page_content)
-        generate_tools_json(database_path)  # Generate consolidated JSON for the library
-
+    total_tools = len(tool_data)
+    for idx, tool in enumerate(tool_data):
+        # Calculate and send progress
         if progress_callback:
-            progress_callback(100)
+            percentage = int((idx + 1) / total_tools * 90)
+            progress_callback(percentage)
 
-        return {"status": "success", "message": "All tools processed successfully."}
+        # Generate JSON files for tools
+        generate_json_files([tool], columns, output_directory)
 
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        # Publish tool to the wiki
+        tool_number = tool["ToolNumber"]
+        wiki_content = generate_wiki_page(tool)
+        page_title = f"{config['wiki_settings']['index_page']}/{config['wiki_settings']['page_prefix']}_{tool_number}"
+        upload_response = upload_wiki_page(session, api_url, page_title, wiki_content)
+
+        # Handle image upload if needed
+        image_file_name = tool.get("ToolImageFileName") or f"tool_{tool_number}.png"
+        image_file_path = os.path.join(config["file_paths"]["bit_images"], image_file_name)
+
+        if os.path.exists(image_file_path):
+            upload_image_if_changed(session, api_url, image_file_path, image_file_name, tool_number)
+
+        # Generate QR code
+        generate_qr_code(tool_number)
+
+    # Update the index page
+    index_page_content = generate_index_page_content()
+    upload_wiki_page(session, api_url, config["wiki_settings"]["index_page"], index_page_content)
+    generate_tools_json()  # Generate consolidated JSON for the library
+
+    if progress_callback:
+        progress_callback(100)
+
+    return {"status": "success", "message": "All tools processed successfully."}
+
+    # except Exception as e:
+    #     return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     # Standalone execution
