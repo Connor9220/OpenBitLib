@@ -276,6 +276,10 @@ def insert(tool_data):
         # Exclude ImageHash
         filtered_tool_data = {key: value for key, value in tool_data.items() if key != "ImageHash"}
 
+        # Preprocess ToolMaxRPM for Tool (as INT)
+        tool_max_rpm_int = int(extract_numeric(tool_data.get("ToolMaxRPM"), field_type="rpm") or 0)
+        filtered_tool_data["ToolMaxRPM"] = tool_max_rpm_int  # Add processed integer value for ToolMaxRPM
+
         # Insert into the main Tool table
         tool = Tool(**filtered_tool_data)
         session.add(tool)
@@ -292,10 +296,13 @@ def insert(tool_data):
         )
         session.add(tool_record)
 
+        # Preprocess ToolMaxRPM for tool_properties (as FLOAT)
+        tool_max_rpm_float = float(tool_max_rpm_int)
+
         # Insert into the `tool_properties` table
         tool_properties_record = ToolPropertiesModel(
             tool_no=tool_data["ToolNumber"],
-            max_rpm=tool_data.get("ToolMaxRPM")
+            max_rpm=tool_max_rpm_float  # Use float value for ToolMaxRPM
         )
         session.add(tool_properties_record)
 
@@ -332,9 +339,12 @@ def update(tool_number, updated_data):
         query = select(Tool).filter_by(ToolNumber=tool_number)
         tool = session.execute(query).scalars().first()
         if tool:
-            for key, value in updated_data.items():
-                if key not in excluded_fields:  # Skip excluded fields
-                    setattr(tool, key, value)
+            tool_max_rpm_int = int(extract_numeric(updated_data.get("ToolMaxRPM"), field_type="rpm") or 0)
+            updated_tool_data = {key: value for key, value in updated_data.items() if key not in excluded_fields}
+            updated_tool_data["ToolMaxRPM"] = tool_max_rpm_int
+
+            for key, value in updated_tool_data.items():
+                setattr(tool, key, value)
             session.commit()
             print(f"Tool {tool_number} updated successfully, excluding fields: {excluded_fields}.")
         else:
@@ -355,7 +365,8 @@ def update(tool_number, updated_data):
         tool_properties_record = session.execute(select(ToolPropertiesModel).filter_by(tool_no=tool_number)).scalars().first()
         if tool_properties_record:
             if "ToolMaxRPM" in updated_data:
-                tool_properties_record.max_rpm = updated_data["ToolMaxRPM"]
+                tool_max_rpm_float = float(extract_numeric(updated_data.get("ToolMaxRPM"), field_type="rpm") or 0)
+                tool_properties_record.max_rpm = tool_max_rpm_float
             session.commit()
 
 def update_image_hash(tool_number, image_hash):
@@ -388,15 +399,15 @@ def delete(tool_number):
         if tool:
             session.delete(tool)
 
-        # Delete from the `tool` table
-        tool_record = session.execute(select(ToolModel).filter_by(tool_no=tool_number)).scalars().first()
-        if tool_record:
-            session.delete(tool_record)
-
         # Delete from the `tool_properties` table
         tool_properties_record = session.execute(select(ToolPropertiesModel).filter_by(tool_no=tool_number)).scalars().first()
         if tool_properties_record:
             session.delete(tool_properties_record)
+
+        # Delete from the `tool` table
+        tool_record = session.execute(select(ToolModel).filter_by(tool_no=tool_number)).scalars().first()
+        if tool_record:
+            session.delete(tool_record)
 
         # Commit all changes in a single transaction
         session.commit()
@@ -416,6 +427,8 @@ def extract_numeric(value, field_type=None):
     """
     if not value:
         return None
+
+    value = value.replace(",", "")
 
     # Extract the numeric portion
     match = re.search(r"[0-9.]+", value)

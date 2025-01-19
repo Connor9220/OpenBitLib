@@ -740,7 +740,7 @@ def generate_wiki_page(tool_data):
 
         # Handle specific formatting for certain fields
         if field == "ToolMaxRPM":
-            formatted_value = "N/A" if str(value) == "-1" else str(value)
+            formatted_value = "N/A" if str(value) == "-1" else f"{int(value):,}"
         elif field in ["ToolShankSize", "ToolDiameter"]:
             formatted_value = format_measurement(value, convert_to_fraction=True, add_quotes=True)
         elif field in ["OAL", "LOC"]:

@@ -552,7 +552,12 @@ class ToolDatabaseGUI(QMainWindow):
     def on_table_item_changed(self, item):
         """
         Handle changes to table items and apply formatting if the field requires it.
+        Only formats the second column (Value).
         """
+        # Ensure the item is in the second column
+        if item.column() != 1:  # Column index 1 is the Value column
+            return
+
         # Get the field name from the first column
         field_name_item = self.tableWidget.item(item.row(), 0)
         if not field_name_item:
@@ -796,8 +801,13 @@ class ToolDatabaseGUI(QMainWindow):
                         return f"{number:.{imperial_precision}f} in"
 
             elif field_type == "angle":
+                # Format angle fields with configurable precision
                 angle_precision = config["tool_settings"].get("angle_precision", 4)
-                return f"{float(value):.{angle_precision}f} °"
+                number = re.sub(r"[^\d.]", "", value)  # Remove all non-digit and non-decimal characters
+                if number:  # Ensure there is something to convert
+                    return f"{float(number):.{angle_precision}f} °"  # Apply precision
+                else:
+                    return f"{float(0):.{angle_precision}f} °"  # Apply precision
 
             elif field_type == "rpm":
                 return f"{int(value):,}"
@@ -1374,8 +1384,8 @@ class ToolDatabaseGUI(QMainWindow):
                 progress.setValue(3)
                 QApplication.processEvents()
                 try:
-                    index_page_content = generate_index_page_content(self.db.db_path)
-                    generate_tools_json(self.db.db_path)
+                    index_page_content = generate_index_page_content()
+                    generate_tools_json()
                     upload_wiki_page(session, api_url, "Nibblerbot/tools", index_page_content)
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Failed to update the index page: {str(e)}")
