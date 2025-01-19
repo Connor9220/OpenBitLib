@@ -3,7 +3,7 @@
 from qtpy.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QWidget, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QLabel, QHBoxLayout, QMessageBox, QStackedWidget, QFormLayout, QTextEdit, QComboBox, QProgressDialog,
-    QCompleter
+    QCompleter, QAbstractItemView
 )
 from qtpy.QtCore import Qt, QTimer, QUrl, QStringListModel
 from qtpy.QtGui import QGuiApplication, QIcon, QDesktopServices, QPixmap
@@ -326,6 +326,7 @@ class ToolDatabaseGUI(QMainWindow):
         self.table.itemClicked.connect(self.load_tool_into_form)
         self.table.setSortingEnabled(True)
         self.layout.addWidget(self.table)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         # Stacked Widget for Pages
         self.stacked_widget = QStackedWidget()
