@@ -29,12 +29,16 @@ def generate_hmac(url: str, secret_key: str = SECRET_KEY) -> str:
         message = path  # No query parameters
 
     # Generate the HMAC signature
-    signature = hmac.new(secret_key.encode(), message.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(
+        secret_key.encode(), message.encode(), hashlib.sha256
+    ).hexdigest()
 
     return signature
 
 
-def verify_hmac(url: str, provided_signature: str, secret_key: str = SECRET_KEY) -> bool:
+def verify_hmac(
+    url: str, provided_signature: str, secret_key: str = SECRET_KEY
+) -> bool:
     """
     Verify an HMAC signature for the complete URL.
 
@@ -51,6 +55,8 @@ def verify_hmac(url: str, provided_signature: str, secret_key: str = SECRET_KEY)
     message = f"{parsed_url.path}?{parsed_url.query}"
 
     # Generate the expected HMAC signature
-    expected_signature = hmac.new(secret_key.encode(), message.encode(), hashlib.sha256).hexdigest()
+    expected_signature = hmac.new(
+        secret_key.encode(), message.encode(), hashlib.sha256
+    ).hexdigest()
 
     return hmac.compare_digest(expected_signature, provided_signature)

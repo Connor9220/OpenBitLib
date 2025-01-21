@@ -13,8 +13,9 @@ from urllib.parse import urlencode
 # Define SQLAlchemy Base and Tool Model
 Base = declarative_base()
 
+
 class Tool(Base):
-    __tablename__ = 'tools'
+    __tablename__ = "tools"
 
     ToolNumber = Column(Integer, primary_key=True, autoincrement=True)
     ToolName = Column(Text)
@@ -42,13 +43,14 @@ class Tool(Base):
     ShapeParameter = Column(Text)
     ShapeAttribute = Column(Text)
 
+
 class ToolModel(Base):
-    __tablename__ = 'tool'
+    __tablename__ = "tool"
 
     tool_no = Column(Integer, primary_key=True, nullable=False)
     diameter = Column(Float, nullable=True)
     remark = Column(String, nullable=True)
-    tool_table_id = Column(Integer, ForeignKey('tool_table.id'), nullable=True)
+    tool_table_id = Column(Integer, ForeignKey("tool_table.id"), nullable=True)
 
     # Relationship with ToolTable
     tool_table = relationship("ToolTable", back_populates="tools")
@@ -56,12 +58,13 @@ class ToolModel(Base):
     def __repr__(self):
         return f"<ToolModel(tool_no={self.tool_no}, diameter={self.diameter}, remark={self.remark}, tool_table_id={self.tool_table_id})>"
 
+
 class ToolPropertiesModel(Base):
-    __tablename__ = 'tool_properties'
+    __tablename__ = "tool_properties"
 
     tool_no = Column(Integer, primary_key=True, nullable=False)
     max_rpm = Column(Float, nullable=True)
-    tool_table_id = Column(Integer, ForeignKey('tool_table.id'), nullable=True)
+    tool_table_id = Column(Integer, ForeignKey("tool_table.id"), nullable=True)
 
     # Relationship with ToolTable
     tool_table = relationship("ToolTable", back_populates="tool_properties")
@@ -69,18 +72,24 @@ class ToolPropertiesModel(Base):
     def __repr__(self):
         return f"<ToolPropertiesModel(tool_no={self.tool_no}, max_rpm={self.max_rpm})>"
 
+
 class ToolTable(Base):
-    __tablename__ = 'tool_table'
+    __tablename__ = "tool_table"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
 
     # Relationships with Tool and ToolProperties
-    tools = relationship("ToolModel", back_populates="tool_table", cascade="all, delete-orphan")
-    tool_properties = relationship("ToolPropertiesModel", back_populates="tool_table", cascade="all, delete-orphan")
+    tools = relationship(
+        "ToolModel", back_populates="tool_table", cascade="all, delete-orphan"
+    )
+    tool_properties = relationship(
+        "ToolPropertiesModel", back_populates="tool_table", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<ToolTable(id={self.id}, name={self.name})>"
+
 
 # Dynamically construct the database URL
 def get_database_url():
@@ -99,9 +108,10 @@ def get_database_url():
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
 
+
 # Initialize the database engine and session
 DATABASE_URL = get_database_url()
-HMAC_ENABLED = CONFIG.get('api', {}).get('hmac_enabled', False)
+HMAC_ENABLED = CONFIG.get("api", {}).get("hmac_enabled", False)
 engine = create_engine(DATABASE_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
@@ -118,6 +128,7 @@ def set_db_mode(mode, api_url=None):
     global DB_MODE, API_URL
     DB_MODE = mode
     API_URL = api_url
+
 
 def make_api_request(method, endpoint, data=None):
     """
@@ -189,17 +200,24 @@ def fetch_column_names(table_name):
 
         if backend == "sqlite":
             # SQLite query
-            result = session.execute(text(f"PRAGMA table_info({table_name});")).fetchall()
+            result = session.execute(
+                text(f"PRAGMA table_info({table_name});")
+            ).fetchall()
             return [row["name"] for row in result]
 
         elif backend in ("mysql", "mariadb"):
             # MariaDB/MySQL query
             schema_name = session.bind.url.database
-            result = session.execute(text("""
+            result = session.execute(
+                text(
+                    """
                 SELECT COLUMN_NAME
                 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = :schema_name AND TABLE_NAME = :table_name
-            """), {"schema_name": schema_name, "table_name": table_name}).fetchall()
+            """
+                ),
+                {"schema_name": schema_name, "table_name": table_name},
+            ).fetchall()
             return [row[0] for row in result]
 
         else:
@@ -223,7 +241,11 @@ def fetch_tool_data(tool_number=None):
         response = make_api_request("GET", endpoint)
 
         # Ensure response includes both 'tools' and 'columns'
-        if not isinstance(response, dict) or "tools" not in response or "columns" not in response:
+        if (
+            not isinstance(response, dict)
+            or "tools" not in response
+            or "columns" not in response
+        ):
             raise ValueError("Invalid API response format for tool data.")
 
         return response["tools"], response["columns"]
@@ -245,6 +267,7 @@ def fetch_tool_data(tool_number=None):
 
         return rows_as_dicts, list(columns)
 
+
 def fetch_filtered(keyword):
     """
     Fetch tools filtered by a keyword from the database or via API.
@@ -258,10 +281,14 @@ def fetch_filtered(keyword):
             - List[str]: Column names corresponding to the data.
     """
     if DB_MODE == "api":
-        response =  make_api_request("GET", f"/filtered", data={"keyword": keyword})
+        response = make_api_request("GET", f"/filtered", data={"keyword": keyword})
 
         # Ensure response includes both 'tools' and 'columns'
-        if not isinstance(response, dict) or "tools" not in response or "columns" not in response:
+        if (
+            not isinstance(response, dict)
+            or "tools" not in response
+            or "columns" not in response
+        ):
             raise ValueError("Invalid API response format for tool data.")
 
         return response["tools"], response["columns"]
@@ -270,9 +297,9 @@ def fetch_filtered(keyword):
     with Session() as session:
         # Query the database for matching tools
         query = select(Tool).filter(
-            Tool.ToolName.like(keyword) |
-            Tool.ToolType.like(keyword) |
-            Tool.ManufacturerName.like(keyword)
+            Tool.ToolName.like(keyword)
+            | Tool.ToolType.like(keyword)
+            | Tool.ManufacturerName.like(keyword)
         )
         tools = session.execute(query).scalars().all()
 
@@ -287,6 +314,7 @@ def fetch_filtered(keyword):
             row.pop("_sa_instance_state", None)
 
         return rows_as_dicts, columns
+
 
 def fetch_tool_numbers_and_details():
     """
@@ -304,14 +332,17 @@ def fetch_tool_numbers_and_details():
         tools = session.execute(query).all()
         return [{"ToolNumber": tool[0], "ToolName": tool[1]} for tool in tools]
 
+
 class ShapeData:
     """
     Wrapper class to emulate attribute access for shape data.
     """
+
     def __init__(self, shape_name, shape_parameter, shape_attribute):
         self.ShapeName = shape_name
         self.ShapeParameter = shape_parameter
         self.ShapeAttribute = shape_attribute
+
 
 def fetch_shapes(shape_name=None):
     if DB_MODE == "api":
@@ -335,7 +366,7 @@ def fetch_shapes(shape_name=None):
                 # Fetch the specific shape's row
                 result = session.execute(
                     text("SELECT * FROM FCShapes WHERE ShapeName = :shape_name"),
-                    {"shape_name": shape_name}
+                    {"shape_name": shape_name},
                 ).fetchone()
                 return result  # Return the row as-is
             else:
@@ -347,6 +378,7 @@ def fetch_shapes(shape_name=None):
     except Exception as e:
         print(f"Error fetching shapes: {e}")
         return None if shape_name else []
+
 
 def fetch_unique_column_values(column_name):
     """
@@ -364,9 +396,12 @@ def fetch_unique_column_values(column_name):
         return list(response["unique_values"])
 
     with Session() as session:
-        query = text(f"SELECT DISTINCT {column_name} FROM tools WHERE {column_name} IS NOT NULL")
+        query = text(
+            f"SELECT DISTINCT {column_name} FROM tools WHERE {column_name} IS NOT NULL"
+        )
         result = session.execute(query).fetchall()
         return [row[0] for row in result]
+
 
 def fetch_image_hash(tool_number):
     """
@@ -386,6 +421,7 @@ def fetch_image_hash(tool_number):
         tool = session.query(Tool).filter_by(ToolNumber=tool_number).first()
         return tool.ImageHash if tool else None
 
+
 def insert(tool_data):
     """
     Insert a new tool into the database and update tool and tool_properties tables, or via API.
@@ -398,25 +434,33 @@ def insert(tool_data):
 
     with Session() as session:
         # Exclude ImageHash
-        filtered_tool_data = {key: value for key, value in tool_data.items() if key != "ImageHash"}
+        filtered_tool_data = {
+            key: value for key, value in tool_data.items() if key != "ImageHash"
+        }
 
         # Preprocess ToolMaxRPM for Tool (as INT)
-        tool_max_rpm_int = int(extract_numeric(tool_data.get("ToolMaxRPM"), field_type="rpm") or 0)
-        filtered_tool_data["ToolMaxRPM"] = tool_max_rpm_int  # Add processed integer value for ToolMaxRPM
+        tool_max_rpm_int = int(
+            extract_numeric(tool_data.get("ToolMaxRPM"), field_type="rpm") or 0
+        )
+        filtered_tool_data[
+            "ToolMaxRPM"
+        ] = tool_max_rpm_int  # Add processed integer value for ToolMaxRPM
 
         # Insert into the main Tool table
         tool = Tool(**filtered_tool_data)
         session.add(tool)
 
         # Convert ToolDiameter to numeric (imperial if necessary)
-        diameter = extract_numeric(tool_data.get("ToolDiameter"), field_type="dimension")
+        diameter = extract_numeric(
+            tool_data.get("ToolDiameter"), field_type="dimension"
+        )
 
         # Insert into the `tool` table
         tool_record = ToolModel(
             tool_no=tool_data["ToolNumber"],
             diameter=diameter,
             remark=tool_data["ToolName"],
-            tool_table_id=1  # Always use tool_table_id = 1
+            tool_table_id=1,  # Always use tool_table_id = 1
         )
         session.add(tool_record)
 
@@ -426,11 +470,12 @@ def insert(tool_data):
         # Insert into the `tool_properties` table
         tool_properties_record = ToolPropertiesModel(
             tool_no=tool_data["ToolNumber"],
-            max_rpm=tool_max_rpm_float  # Use float value for ToolMaxRPM
+            max_rpm=tool_max_rpm_float,  # Use float value for ToolMaxRPM
         )
         session.add(tool_properties_record)
 
         session.commit()
+
 
 def update(tool_number, updated_data):
     """
@@ -450,22 +495,36 @@ def update(tool_number, updated_data):
         query = select(Tool).filter_by(ToolNumber=tool_number)
         tool = session.execute(query).scalars().first()
         if tool:
-            tool_max_rpm_int = int(extract_numeric(updated_data.get("ToolMaxRPM"), field_type="rpm") or 0)
-            updated_tool_data = {key: value for key, value in updated_data.items() if key not in excluded_fields}
+            tool_max_rpm_int = int(
+                extract_numeric(updated_data.get("ToolMaxRPM"), field_type="rpm") or 0
+            )
+            updated_tool_data = {
+                key: value
+                for key, value in updated_data.items()
+                if key not in excluded_fields
+            }
             updated_tool_data["ToolMaxRPM"] = tool_max_rpm_int
 
             for key, value in updated_tool_data.items():
                 setattr(tool, key, value)
             session.commit()
-            print(f"Tool {tool_number} updated successfully, excluding fields: {excluded_fields}.")
+            print(
+                f"Tool {tool_number} updated successfully, excluding fields: {excluded_fields}."
+            )
         else:
             print(f"Tool {tool_number} not found.")
 
         # Update the `tool` table
-        tool_record = session.execute(select(ToolModel).filter_by(tool_no=tool_number)).scalars().first()
+        tool_record = (
+            session.execute(select(ToolModel).filter_by(tool_no=tool_number))
+            .scalars()
+            .first()
+        )
         if tool_record:
             if "ToolDiameter" in updated_data:
-                diameter = extract_numeric(updated_data["ToolDiameter"], field_type="dimension")
+                diameter = extract_numeric(
+                    updated_data["ToolDiameter"], field_type="dimension"
+                )
                 if diameter is not None:
                     tool_record.diameter = diameter
             if "ToolName" in updated_data:
@@ -473,12 +532,20 @@ def update(tool_number, updated_data):
             session.commit()
 
         # Update the `tool_properties` table
-        tool_properties_record = session.execute(select(ToolPropertiesModel).filter_by(tool_no=tool_number)).scalars().first()
+        tool_properties_record = (
+            session.execute(select(ToolPropertiesModel).filter_by(tool_no=tool_number))
+            .scalars()
+            .first()
+        )
         if tool_properties_record:
             if "ToolMaxRPM" in updated_data:
-                tool_max_rpm_float = float(extract_numeric(updated_data.get("ToolMaxRPM"), field_type="rpm") or 0)
+                tool_max_rpm_float = float(
+                    extract_numeric(updated_data.get("ToolMaxRPM"), field_type="rpm")
+                    or 0
+                )
                 tool_properties_record.max_rpm = tool_max_rpm_float
             session.commit()
+
 
 def update_image_hash(tool_number, image_hash):
     """
@@ -492,7 +559,9 @@ def update_image_hash(tool_number, image_hash):
         None
     """
     if DB_MODE == "api":
-        return make_api_request("PUT", f"/update_image_hash/{tool_number}", data={"image_hash": image_hash})
+        return make_api_request(
+            "PUT", f"/update_image_hash/{tool_number}", data={"image_hash": image_hash}
+        )
 
     with Session() as session:
         query = select(Tool).filter_by(ToolNumber=tool_number)
@@ -500,6 +569,7 @@ def update_image_hash(tool_number, image_hash):
         if tool:
             tool.ImageHash = image_hash
             session.commit()
+
 
 def delete(tool_number):
     """
@@ -513,22 +583,35 @@ def delete(tool_number):
 
     with Session() as session:
         # Delete from the main Tool table
-        tool = session.execute(select(Tool).filter_by(ToolNumber=tool_number)).scalars().first()
+        tool = (
+            session.execute(select(Tool).filter_by(ToolNumber=tool_number))
+            .scalars()
+            .first()
+        )
         if tool:
             session.delete(tool)
 
         # Delete from the `tool_properties` table
-        tool_properties_record = session.execute(select(ToolPropertiesModel).filter_by(tool_no=tool_number)).scalars().first()
+        tool_properties_record = (
+            session.execute(select(ToolPropertiesModel).filter_by(tool_no=tool_number))
+            .scalars()
+            .first()
+        )
         if tool_properties_record:
             session.delete(tool_properties_record)
 
         # Delete from the `tool` table
-        tool_record = session.execute(select(ToolModel).filter_by(tool_no=tool_number)).scalars().first()
+        tool_record = (
+            session.execute(select(ToolModel).filter_by(tool_no=tool_number))
+            .scalars()
+            .first()
+        )
         if tool_record:
             session.delete(tool_record)
 
         # Commit all changes in a single transaction
         session.commit()
+
 
 def extract_numeric(value, field_type=None):
     """

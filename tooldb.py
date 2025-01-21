@@ -1,16 +1,35 @@
 #!/usr/bin/env python3
 
 from qtpy.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QWidget, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
-    QLabel, QHBoxLayout, QMessageBox, QStackedWidget, QFormLayout, QTextEdit, QComboBox, QProgressDialog,
-    QCompleter, QAbstractItemView
+    QApplication,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QLabel,
+    QHBoxLayout,
+    QMessageBox,
+    QStackedWidget,
+    QFormLayout,
+    QTextEdit,
+    QComboBox,
+    QProgressDialog,
+    QCompleter,
+    QAbstractItemView,
 )
 from qtpy.QtCore import Qt, QTimer, QUrl, QStringListModel
 from qtpy.QtGui import QGuiApplication, QIcon, QDesktopServices, QPixmap
 import json
 from gentoolwiki import (
-    delete_wiki_item, main as wiki_main, generate_index_page_content,
-    upload_wiki_page, generate_tools_json, map_column_names
+    delete_wiki_item,
+    main as wiki_main,
+    generate_index_page_content,
+    upload_wiki_page,
+    generate_tools_json,
+    map_column_names,
 )
 
 from db_utils import *
@@ -26,10 +45,11 @@ from settings import load_config
 # Load the configuration
 config = load_config()
 
-API_URL = config.get('api', {}).get('url', 'http://127.0.0.0:8000')
+API_URL = config.get("api", {}).get("url", "http://127.0.0.0:8000")
 DB_MODE = "api"
 
 set_db_mode(DB_MODE, API_URL)
+
 
 class FilterableComboBox(QComboBox):
     def __init__(self, get_items_callback, parent=None):
@@ -75,7 +95,9 @@ class FilterableComboBox(QComboBox):
         """
         Filter items based on input text.
         """
-        filtered_items = [item for item in self.last_items if text.lower() in item.lower()]
+        filtered_items = [
+            item for item in self.last_items if text.lower() in item.lower()
+        ]
         self.model.setStringList([""] + filtered_items)
 
     def on_completer_activated(self, text):
@@ -114,29 +136,36 @@ class FilterableComboBox(QComboBox):
         self.line_edit.selectAll()
         super().focusInEvent(event)
 
+
 class ToolDatabaseGUI(QMainWindow):
     def __init__(self, config):
         super().__init__()
         self.confg = config
 
-        self.wiki_publish_enabled = config.get('wiki_settings', {}).get('publish', True)
+        self.wiki_publish_enabled = config.get("wiki_settings", {}).get("publish", True)
 
         # Initialize the debounce timer for search
         self.search_timer = QTimer(self)
-        self.search_timer.setSingleShot(True)  # Ensure the timer only triggers once after reset
+        self.search_timer.setSingleShot(
+            True
+        )  # Ensure the timer only triggers once after reset
         self.search_timer.timeout.connect(self.perform_search)
         self.original_shape = None
 
         # Initialize database connection
-        #self.db = DatabaseManager()
+        # self.db = DatabaseManager()
 
         self.setWindowTitle("OpenBitLib - Toolbit Database Manager")
 
         # Parse window size and position
-        window_size = config.get("gui_settings", {}).get("default_window_size", "1559x780")
-        window_position = config.get("gui_settings", {}).get("default_window_position", "0x0")
-        width, height = map(int, window_size.split('x'))
-        x, y = map(int, window_position.split('x'))
+        window_size = config.get("gui_settings", {}).get(
+            "default_window_size", "1559x780"
+        )
+        window_position = config.get("gui_settings", {}).get(
+            "default_window_position", "0x0"
+        )
+        width, height = map(int, window_size.split("x"))
+        x, y = map(int, window_position.split("x"))
         self.setGeometry(x, y, width, height)
 
         self.setWindowFlags(Qt.Window)
@@ -146,39 +175,67 @@ class ToolDatabaseGUI(QMainWindow):
         QApplication.setStyle(theme)
 
         # Define shape fields dynamically
-        self.shape_fields = config.get("tool_settings", {}).get("shape_fields", {
-            "endmill.fcstd": ["Chipload", "CuttingEdgeHeight", "SpindleDirection", "Stickout"],
-            "ballend.fcstd": ["Chipload", "CuttingEdgeHeight", "Stickout"],
-            "v-bit.fcstd": ["CuttingEdgeAngle", "TipDiameter", "CuttingEdgeHeight", "Stickout"],
-            "torus.fcstd": ["TorusRadius", "CuttingEdgeHeight", "Chipload", "SpindleDirection", "Stickout"],
-            "drill.fcstd": ["TipAngle", "Chipload", "Stickout"],
-            "slittingsaw.fcstd": ["BladeThickness", "CapDiameter", "CapHeight"],
-            "probe.fcstd": ["ShaftDiameter", "SpindlePower"],
-            "roundover.fcstd": ["CuttingRadius","CuttingEdgeHeight", "TipDiameter","Chipload", "Stickout"],
-        })
+        self.shape_fields = config.get("tool_settings", {}).get(
+            "shape_fields",
+            {
+                "endmill.fcstd": [
+                    "Chipload",
+                    "CuttingEdgeHeight",
+                    "SpindleDirection",
+                    "Stickout",
+                ],
+                "ballend.fcstd": ["Chipload", "CuttingEdgeHeight", "Stickout"],
+                "v-bit.fcstd": [
+                    "CuttingEdgeAngle",
+                    "TipDiameter",
+                    "CuttingEdgeHeight",
+                    "Stickout",
+                ],
+                "torus.fcstd": [
+                    "TorusRadius",
+                    "CuttingEdgeHeight",
+                    "Chipload",
+                    "SpindleDirection",
+                    "Stickout",
+                ],
+                "drill.fcstd": ["TipAngle", "Chipload", "Stickout"],
+                "slittingsaw.fcstd": ["BladeThickness", "CapDiameter", "CapHeight"],
+                "probe.fcstd": ["ShaftDiameter", "SpindlePower"],
+                "roundover.fcstd": [
+                    "CuttingRadius",
+                    "CuttingEdgeHeight",
+                    "TipDiameter",
+                    "Chipload",
+                    "Stickout",
+                ],
+            },
+        )
 
         # Fields to format dynamically
-        self.fields_to_format = config.get("tool_settings", {}).get("fields_to_format", {
-            "SuggestedMaxDOC": "dimension",
-            "ToolShankSize": "dimension",
-            "OAL": "dimension",
-            "LOC": "dimension",
-            "ToolDiameter": "dimension",
-            "Chipload": "dimension",
-            "TipDiameter": "dimension",
-            "TorusRadius": "dimension",
-            "ShaftDiameter": "dimension",
-            "BladeThickness": "dimension",
-            "CapDiameter": "dimension",
-            "CapHeight": "dimension",
-            "CuttingEdgeAngle": "angle",
-            "TipAngle": "angle",
-            "ToolMaxRPM": "rpm",
-            "ToolNumber": "number",
-            "Flutes": "number",
-            "Stickout": "dimension",
-            "CuttingRadius": "dimension",
-        })
+        self.fields_to_format = config.get("tool_settings", {}).get(
+            "fields_to_format",
+            {
+                "SuggestedMaxDOC": "dimension",
+                "ToolShankSize": "dimension",
+                "OAL": "dimension",
+                "LOC": "dimension",
+                "ToolDiameter": "dimension",
+                "Chipload": "dimension",
+                "TipDiameter": "dimension",
+                "TorusRadius": "dimension",
+                "ShaftDiameter": "dimension",
+                "BladeThickness": "dimension",
+                "CapDiameter": "dimension",
+                "CapHeight": "dimension",
+                "CuttingEdgeAngle": "angle",
+                "TipAngle": "angle",
+                "ToolMaxRPM": "rpm",
+                "ToolNumber": "number",
+                "Flutes": "number",
+                "Stickout": "dimension",
+                "CuttingRadius": "dimension",
+            },
+        )
 
         self.COLUMN_LABELS = {
             "ToolNumber": "Tool Number",
@@ -245,7 +302,9 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Table
         self.table = QTableWidget()
-        self.table.setMinimumHeight(self.table.verticalHeader().defaultSectionSize() * 4)
+        self.table.setMinimumHeight(
+            self.table.verticalHeader().defaultSectionSize() * 4
+        )
         self.table.itemClicked.connect(self.load_tool_into_form)
         self.table.setSortingEnabled(True)
         self.layout.addWidget(self.table)
@@ -257,27 +316,135 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Define fields from the original table
         self.page1_fields = {
-#            "ToolNumber": {"label": self.COLUMN_LABELS["ToolNumber"], "widget": QLineEdit(), "column": "left", "width": 100},
-            "ToolNumber": {"label": self.COLUMN_LABELS["ToolNumber"], "widget": self.create_url_widget(100, generate_url_callback=lambda tool_number: f"https://wiki.knoxmakers.org/Nibblerbot/tools/tool_{tool_number}" if tool_number else ""), "column": "left", "width": 100 },
-            "ToolName": {"label": self.COLUMN_LABELS["ToolName"], "widget": QLineEdit(), "column": "left", "width": 350},
-            "ToolType": {"label": self.COLUMN_LABELS["ToolType"], "widget": QLineEdit(), "column": "left", "width": 350},
-            "ToolShankSize": {"label": self.COLUMN_LABELS["ToolShankSize"], "widget": QLineEdit(), "column": "left", "width": 150},
-            "ToolDiameter": {"label": self.COLUMN_LABELS["ToolDiameter"], "widget": QLineEdit(), "column": "left", "width": 150},
-            "Flutes": {"label": self.COLUMN_LABELS["Flutes"], "widget": QLineEdit(), "column": "left", "width": 100},
-            "OAL": {"label": self.COLUMN_LABELS["OAL"], "widget": QLineEdit(), "column": "left", "width": 150},
-            "LOC": {"label": self.COLUMN_LABELS["LOC"], "widget": QLineEdit(), "column": "left", "width": 150},
-            "ToolMaxRPM": {"label": self.COLUMN_LABELS["ToolMaxRPM"], "widget": QLineEdit(), "column": "left", "width": 150},
-            "ToolMaterial": {"label": self.COLUMN_LABELS["ToolMaterial"], "widget": QComboBox(), "column": "left", "width": 150},
-            "ToolCoating": {"label": self.COLUMN_LABELS["ToolCoating"], "widget": self.create_filterable_combobox("ToolCoating"), "column": "left", "width": 150},
-            "ToolImageFileName": {"label": self.COLUMN_LABELS["ToolImageFileName"], "widget": QLineEdit(), "column": "left", "width": 200},
-            "SuggestedMaxDOC": {"label": self.COLUMN_LABELS["SuggestedMaxDOC"], "widget": QLineEdit(), "column": "right", "width": 150},
-            "SuggestedRPM": {"label": self.COLUMN_LABELS["SuggestedRPM"], "widget": QLineEdit(), "column": "right", "width": 300},
-            "PartNumber": {"label": self.COLUMN_LABELS["PartNumber"], "widget": QLineEdit(), "column": "right", "width": 300},
-            "ManufacturerName": {"label": self.COLUMN_LABELS["ManufacturerName"], "widget": self.create_filterable_combobox("ManufacturerName"), "column": "right", "width": 500},
-            "ToolOrderURL": { "label": self.COLUMN_LABELS["ToolOrderURL"], "widget": self.create_url_widget(500), "column": "right", "width": 500 },
-            "Materials": {"label": self.COLUMN_LABELS["Materials"], "widget": QTextEdit(), "column": "right", "width": 500, "height": 70},
-            "AdditionalNotes": {"label": self.COLUMN_LABELS["AdditionalNotes"], "widget": QTextEdit(), "column": "right", "width": 500, "height": 70},
-            "SuggestedFeedRate": {"label": self.COLUMN_LABELS["SuggestedFeedRate"], "widget": QTextEdit(), "column": "right", "width": 500, "height": 70},
+            #            "ToolNumber": {"label": self.COLUMN_LABELS["ToolNumber"], "widget": QLineEdit(), "column": "left", "width": 100},
+            "ToolNumber": {
+                "label": self.COLUMN_LABELS["ToolNumber"],
+                "widget": self.create_url_widget(
+                    100,
+                    generate_url_callback=lambda tool_number: f"https://wiki.knoxmakers.org/Nibblerbot/tools/tool_{tool_number}"
+                    if tool_number
+                    else "",
+                ),
+                "column": "left",
+                "width": 100,
+            },
+            "ToolName": {
+                "label": self.COLUMN_LABELS["ToolName"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 350,
+            },
+            "ToolType": {
+                "label": self.COLUMN_LABELS["ToolType"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 350,
+            },
+            "ToolShankSize": {
+                "label": self.COLUMN_LABELS["ToolShankSize"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 150,
+            },
+            "ToolDiameter": {
+                "label": self.COLUMN_LABELS["ToolDiameter"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 150,
+            },
+            "Flutes": {
+                "label": self.COLUMN_LABELS["Flutes"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 100,
+            },
+            "OAL": {
+                "label": self.COLUMN_LABELS["OAL"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 150,
+            },
+            "LOC": {
+                "label": self.COLUMN_LABELS["LOC"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 150,
+            },
+            "ToolMaxRPM": {
+                "label": self.COLUMN_LABELS["ToolMaxRPM"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 150,
+            },
+            "ToolMaterial": {
+                "label": self.COLUMN_LABELS["ToolMaterial"],
+                "widget": QComboBox(),
+                "column": "left",
+                "width": 150,
+            },
+            "ToolCoating": {
+                "label": self.COLUMN_LABELS["ToolCoating"],
+                "widget": self.create_filterable_combobox("ToolCoating"),
+                "column": "left",
+                "width": 150,
+            },
+            "ToolImageFileName": {
+                "label": self.COLUMN_LABELS["ToolImageFileName"],
+                "widget": QLineEdit(),
+                "column": "left",
+                "width": 200,
+            },
+            "SuggestedMaxDOC": {
+                "label": self.COLUMN_LABELS["SuggestedMaxDOC"],
+                "widget": QLineEdit(),
+                "column": "right",
+                "width": 150,
+            },
+            "SuggestedRPM": {
+                "label": self.COLUMN_LABELS["SuggestedRPM"],
+                "widget": QLineEdit(),
+                "column": "right",
+                "width": 300,
+            },
+            "PartNumber": {
+                "label": self.COLUMN_LABELS["PartNumber"],
+                "widget": QLineEdit(),
+                "column": "right",
+                "width": 300,
+            },
+            "ManufacturerName": {
+                "label": self.COLUMN_LABELS["ManufacturerName"],
+                "widget": self.create_filterable_combobox("ManufacturerName"),
+                "column": "right",
+                "width": 500,
+            },
+            "ToolOrderURL": {
+                "label": self.COLUMN_LABELS["ToolOrderURL"],
+                "widget": self.create_url_widget(500),
+                "column": "right",
+                "width": 500,
+            },
+            "Materials": {
+                "label": self.COLUMN_LABELS["Materials"],
+                "widget": QTextEdit(),
+                "column": "right",
+                "width": 500,
+                "height": 70,
+            },
+            "AdditionalNotes": {
+                "label": self.COLUMN_LABELS["AdditionalNotes"],
+                "widget": QTextEdit(),
+                "column": "right",
+                "width": 500,
+                "height": 70,
+            },
+            "SuggestedFeedRate": {
+                "label": self.COLUMN_LABELS["SuggestedFeedRate"],
+                "widget": QTextEdit(),
+                "column": "right",
+                "width": 500,
+                "height": 70,
+            },
         }
 
         # Page 1: Basic Tool Info
@@ -292,13 +459,21 @@ class ToolDatabaseGUI(QMainWindow):
         self.page1_layout.addLayout(self.right_form_layout)
 
         # Configure alignment and spacing for both columns
-        self.left_form_layout.setLabelAlignment(Qt.AlignLeft)  # Align labels to the left
+        self.left_form_layout.setLabelAlignment(
+            Qt.AlignLeft
+        )  # Align labels to the left
         self.left_form_layout.setFormAlignment(Qt.AlignLeft)  # Align fields to the left
-        self.left_form_layout.setHorizontalSpacing(20)  # Space between labels and fields
+        self.left_form_layout.setHorizontalSpacing(
+            20
+        )  # Space between labels and fields
         self.left_form_layout.setVerticalSpacing(10)  # Space between rows
 
-        self.right_form_layout.setLabelAlignment(Qt.AlignLeft)  # Align labels to the left
-        self.right_form_layout.setFormAlignment(Qt.AlignLeft)  # Align fields to the left
+        self.right_form_layout.setLabelAlignment(
+            Qt.AlignLeft
+        )  # Align labels to the left
+        self.right_form_layout.setFormAlignment(
+            Qt.AlignLeft
+        )  # Align fields to the left
         self.right_form_layout.setHorizontalSpacing(20)
         self.right_form_layout.setVerticalSpacing(10)
 
@@ -311,14 +486,14 @@ class ToolDatabaseGUI(QMainWindow):
             self.tool_inputs[field] = input_field
             # Connect formatting for specific fields
             if field in self.fields_to_format:
-                if isinstance(input_field, QLineEdit):  # Only connect if it's a QLineEdit
+                if isinstance(
+                    input_field, QLineEdit
+                ):  # Only connect if it's a QLineEdit
                     input_field.editingFinished.connect(
                         lambda name=field: self.format_field(name)
                     )
                 elif isinstance(input_field, QTextEdit):  # Handle QTextEdit differently
-                    input_field.textChanged.connect(
-                        lambda: self.format_field(field)
-                    )
+                    input_field.textChanged.connect(lambda: self.format_field(field))
 
             # Apply width and height
             if "width" in config:
@@ -337,7 +512,9 @@ class ToolDatabaseGUI(QMainWindow):
         self.page1_layout.setContentsMargins(10, 10, 10, 10)  # Outer margins
 
         # Populate the 'ToolMaterial' combo box
-        if "ToolMaterial" in self.tool_inputs and isinstance(self.tool_inputs["ToolMaterial"], QComboBox):
+        if "ToolMaterial" in self.tool_inputs and isinstance(
+            self.tool_inputs["ToolMaterial"], QComboBox
+        ):
             self.tool_inputs["ToolMaterial"].clear()
             self.tool_inputs["ToolMaterial"].addItems(["Carbide", "HSS"])
 
@@ -353,8 +530,16 @@ class ToolDatabaseGUI(QMainWindow):
         self.page2_layout = QFormLayout()
         self.page2.setLayout(self.page2_layout)
         self.page2_fields = {
-            "Shape": {"label": self.COLUMN_LABELS["Shape"], "widget": QComboBox(), "width": 200},
-            "Stickout": {"label": self.COLUMN_LABELS["Stickout"], "widget": QLineEdit(), "width": 150},
+            "Shape": {
+                "label": self.COLUMN_LABELS["Shape"],
+                "widget": QComboBox(),
+                "width": 200,
+            },
+            "Stickout": {
+                "label": self.COLUMN_LABELS["Stickout"],
+                "widget": QLineEdit(),
+                "width": 150,
+            },
             # "Chipload": {"label": self.COLUMN_LABELS["Chipload"], "widget": QLineEdit(), "width": 150},
             # "TipAngle": {"label": self.COLUMN_LABELS["TipAngle"], "widget": QLineEdit(), "width": 150},
             # "CuttingEdgeAngle": {"label": self.COLUMN_LABELS["CuttingEdgeAngle"], "widget": QLineEdit(), "width": 150},
@@ -388,7 +573,9 @@ class ToolDatabaseGUI(QMainWindow):
                 )
 
         shapes = fetch_shapes()
-        if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
+        if "Shape" in self.tool_inputs and isinstance(
+            self.tool_inputs["Shape"], QComboBox
+        ):
             self.tool_inputs["Shape"].clear()  # Clear existing items
             self.tool_inputs["Shape"].addItems(shapes)
             # self.tool_inputs["Shape"].currentTextChanged.connect(self.update_table_with_non_direct_fields)
@@ -396,12 +583,13 @@ class ToolDatabaseGUI(QMainWindow):
 
         self.stacked_widget.addWidget(self.page2)
 
-
         # Add Table Widget for Non-Direct Fields
         self.tableWidget = QTableWidget()
         self.tableWidget.setColumnCount(2)
         self.tableWidget.setHorizontalHeaderLabels(["Field Name", "Value"])
-        self.tableWidget.setEditTriggers(QAbstractItemView.DoubleClicked)  # Allow editing the value column
+        self.tableWidget.setEditTriggers(
+            QAbstractItemView.DoubleClicked
+        )  # Allow editing the value column
         self.tableWidget.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tableWidget.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
@@ -415,7 +603,9 @@ class ToolDatabaseGUI(QMainWindow):
         # Navigation Buttons
         self.nav_layout = QHBoxLayout()
         self.page1_button = QPushButton("Basic Info")
-        self.page1_button.clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.page1))
+        self.page1_button.clicked.connect(
+            lambda: self.stacked_widget.setCurrentWidget(self.page1)
+        )
 
         self.page2_button = QPushButton("FreeCAD Parameters")
         self.page2_button.clicked.connect(self.on_page2_button_clicked)
@@ -457,7 +647,6 @@ class ToolDatabaseGUI(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.page2)
         self.tableWidget.resizeColumnsToContents()  # Adjust column widths dynamically
 
-
     def create_url_widget(self, total_width, generate_url_callback=None):
         """
         Create a widget containing a QLineEdit for URL input and a QPushButton to open the URL.
@@ -486,7 +675,9 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Add a button to open the URL
         open_url_button = QPushButton()
-        open_url_button.setIcon(QIcon("icons/external-link.svg"))  # Replace with your icon's path
+        open_url_button.setIcon(
+            QIcon("icons/external-link.svg")
+        )  # Replace with your icon's path
         open_url_button.setMaximumWidth(button_width)
         open_url_button.setMaximumHeight(button_width)
         url_layout.addWidget(open_url_button)
@@ -526,14 +717,15 @@ class ToolDatabaseGUI(QMainWindow):
         """
         if url.strip():
             QDesktopServices.openUrl(QUrl(url))
-        #else:
+        # else:
         #    QMessageBox.warning(self, "Invalid URL", "The URL field is empty or invalid.")
-
 
     def setup_table(self):
         """Setup the data table."""
         self.table = QTableWidget()
-        self.table.setMinimumHeight(self.table.verticalHeader().defaultSectionSize() * 7)
+        self.table.setMinimumHeight(
+            self.table.verticalHeader().defaultSectionSize() * 7
+        )
         self.table.itemClicked.connect(self.load_tool_into_form)
 
         # Set column headers dynamically
@@ -557,7 +749,6 @@ class ToolDatabaseGUI(QMainWindow):
             if table_widget.horizontalHeaderItem(col).text() == column_name:
                 return col
         return -1
-
 
     def on_table_item_changed(self, item):
         """
@@ -595,7 +786,7 @@ class ToolDatabaseGUI(QMainWindow):
         """
         # Insert a space before each uppercase letter followed by a lowercase letter
         # or between two uppercase letters followed by a lowercase
-        human_readable = re.sub(r'(?<!^)(?=[A-Z])', ' ', value)
+        human_readable = re.sub(r"(?<!^)(?=[A-Z])", " ", value)
         # Capitalize the first letter of each word
         return human_readable.strip().title()
 
@@ -611,7 +802,7 @@ class ToolDatabaseGUI(QMainWindow):
         """
         # Split by spaces and capitalize each word, then join without spaces
         words = value.split()
-        return ''.join(word.capitalize() for word in words)
+        return "".join(word.capitalize() for word in words)
 
     def initialize_column_indices(self):
         """
@@ -619,7 +810,10 @@ class ToolDatabaseGUI(QMainWindow):
         Also, dump the current state of the table for debugging.
         """
         # Get and print table headers
-        headers = [self.table.horizontalHeaderItem(col).text() for col in range(self.table.columnCount())]
+        headers = [
+            self.table.horizontalHeaderItem(col).text()
+            for col in range(self.table.columnCount())
+        ]
 
         for row in range(self.table.rowCount()):
             row_data = []
@@ -628,11 +822,17 @@ class ToolDatabaseGUI(QMainWindow):
                 row_data.append(item.text() if item else "EMPTY")
 
         # Initialize column indices for ShapeParameter and ShapeAttribute
-        self.shape_parameter_col = headers.index("ShapeParameter") if "ShapeParameter" in headers else -1
-        self.shape_attribute_col = headers.index("ShapeAttribute") if "ShapeAttribute" in headers else -1
+        self.shape_parameter_col = (
+            headers.index("ShapeParameter") if "ShapeParameter" in headers else -1
+        )
+        self.shape_attribute_col = (
+            headers.index("ShapeAttribute") if "ShapeAttribute" in headers else -1
+        )
 
         if self.shape_parameter_col == -1 or self.shape_attribute_col == -1:
-            print("Warning: 'ShapeParameter' or 'ShapeAttribute' column not found. Skipping column index initialization.")
+            print(
+                "Warning: 'ShapeParameter' or 'ShapeAttribute' column not found. Skipping column index initialization."
+            )
 
     def update_table_with_non_direct_fields(self, tool_row):
         """
@@ -656,17 +856,25 @@ class ToolDatabaseGUI(QMainWindow):
             return
 
         # Parse ShapeParameter and ShapeAttribute
-        shape_parameters = json.loads(shape_data.ShapeParameter) if shape_data.ShapeParameter else []
-        shape_attributes = json.loads(shape_data.ShapeAttribute) if shape_data.ShapeAttribute else []
+        shape_parameters = (
+            json.loads(shape_data.ShapeParameter) if shape_data.ShapeParameter else []
+        )
+        shape_attributes = (
+            json.loads(shape_data.ShapeAttribute) if shape_data.ShapeAttribute else []
+        )
 
         # Combine ShapeParameter and ShapeAttribute fields
         all_shape_fields = set(shape_parameters + shape_attributes)
 
         # Convert ShapeParameter and ShapeAttribute to JSON names
-        mapped_shape_fields = set(map_column_names(field, direction="to_json") for field in all_shape_fields)
+        mapped_shape_fields = set(
+            map_column_names(field, direction="to_json") for field in all_shape_fields
+        )
 
         # Convert self.column_names to JSON names for consistent comparison
-        mapped_column_names = set(map_column_names(col, direction="to_json") for col in self.column_names)
+        mapped_column_names = set(
+            map_column_names(col, direction="to_json") for col in self.column_names
+        )
 
         # Identify non-direct fields (fields not in direct column names)
         non_direct_fields = mapped_shape_fields - mapped_column_names
@@ -694,17 +902,25 @@ class ToolDatabaseGUI(QMainWindow):
 
         for row, field in enumerate(non_direct_fields):
             # Convert JSON name to SQLite name and then to a human-readable format
-            json_field_name = map_column_names(field, direction="to_json")  # Convert to JSON format
-            human_readable_name = self.make_human_readable(json_field_name)  # Convert JSON name to human-readable
+            json_field_name = map_column_names(
+                field, direction="to_json"
+            )  # Convert to JSON format
+            human_readable_name = self.make_human_readable(
+                json_field_name
+            )  # Convert JSON name to human-readable
 
             # Display human-readable name in the table
             field_item = QTableWidgetItem(human_readable_name)
-            field_item.setFlags(field_item.flags() ^ Qt.ItemIsEditable)  # Make field name read-only
+            field_item.setFlags(
+                field_item.flags() ^ Qt.ItemIsEditable
+            )  # Make field name read-only
             self.tableWidget.setItem(row, 0, field_item)
 
             # Use tool data value if available, otherwise set as empty
             value_item = QTableWidgetItem(tool_data.get(field, ""))
-            value_item.setFlags(value_item.flags() | Qt.ItemIsEditable)  # Ensure value field is editable
+            value_item.setFlags(
+                value_item.flags() | Qt.ItemIsEditable
+            )  # Ensure value field is editable
             self.tableWidget.setItem(row, 1, value_item)
 
     def focus_value_field(self, item):
@@ -725,7 +941,11 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Check if the cell is already being edited
         current_index = self.tableWidget.currentIndex()
-        if current_index.row() == row and current_index.column() == column and self.tableWidget.state() == QAbstractItemView.EditingState:
+        if (
+            current_index.row() == row
+            and current_index.column() == column
+            and self.tableWidget.state() == QAbstractItemView.EditingState
+        ):
             return
 
         # Set focus and start editing
@@ -744,8 +964,9 @@ class ToolDatabaseGUI(QMainWindow):
             # Reconnect the signal after execution
             self.tableWidget.itemClicked.connect(self.focus_value_field)
 
-
-    def update_page_fields_visibility(self, layout, always_visible_fields, specific_fields):
+    def update_page_fields_visibility(
+        self, layout, always_visible_fields, specific_fields
+    ):
         """
         Update visibility for fields in a specific page layout.
         """
@@ -755,7 +976,10 @@ class ToolDatabaseGUI(QMainWindow):
 
             for field_name, widget in self.tool_inputs.items():
                 if field_widget == widget:
-                    if field_name in always_visible_fields or field_name in specific_fields:
+                    if (
+                        field_name in always_visible_fields
+                        or field_name in specific_fields
+                    ):
                         field_widget.show()
                         if label_widget:
                             label_widget.show()
@@ -763,7 +987,6 @@ class ToolDatabaseGUI(QMainWindow):
                         field_widget.hide()
                         if label_widget:
                             label_widget.hide()
-
 
     def format_field_logic(self, value, field_type):
         """
@@ -800,20 +1023,28 @@ class ToolDatabaseGUI(QMainWindow):
                     else:
                         number = float(Fraction(number_str))
 
-                    if unit in ('', '"', 'in'):
-                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
+                    if unit in ("", '"', "in"):
+                        imperial_precision = config["tool_settings"].get(
+                            "imperial_precision", 4
+                        )
                         return f"{number:.{imperial_precision}f} in"
-                    elif unit.lower() in ('mm', 'millimeter'):
-                        metric_precision = config["tool_settings"].get("metric_precision", 3)
+                    elif unit.lower() in ("mm", "millimeter"):
+                        metric_precision = config["tool_settings"].get(
+                            "metric_precision", 3
+                        )
                         return f"{number:.{metric_precision}f} mm"
                     else:
-                        imperial_precision = config["tool_settings"].get("imperial_precision", 4)
+                        imperial_precision = config["tool_settings"].get(
+                            "imperial_precision", 4
+                        )
                         return f"{number:.{imperial_precision}f} in"
 
             elif field_type == "angle":
                 # Format angle fields with configurable precision
                 angle_precision = config["tool_settings"].get("angle_precision", 4)
-                number = re.sub(r"[^\d.]", "", value)  # Remove all non-digit and non-decimal characters
+                number = re.sub(
+                    r"[^\d.]", "", value
+                )  # Remove all non-digit and non-decimal characters
                 if number:  # Ensure there is something to convert
                     return f"{float(number):.{angle_precision}f} °"  # Apply precision
                 else:
@@ -822,13 +1053,13 @@ class ToolDatabaseGUI(QMainWindow):
             elif field_type == "rpm":
                 # Format RPM fields
                 if value == "-1":
-                    return("-1")  # Allow -1 as a valid value
+                    return "-1"  # Allow -1 as a valid value
                 number = re.sub(r"[^\d]", "", value)  # Remove all non-digit characters
                 if number:  # Ensure there is something to convert
                     number = int(number)  # Convert the cleaned value to an integer
                     return f"{number:,}"  # Format with commas
                 else:
-                    return ("")  # Clear the field if it contains no valid number
+                    return ""  # Clear the field if it contains no valid number
 
             elif field_type == "number":
                 return re.sub(r"[^\d]", "", value)
@@ -903,6 +1134,7 @@ class ToolDatabaseGUI(QMainWindow):
         Returns:
             FilterableComboBox: The populated combo box.
         """
+
         def get_items():
             return fetch_unique_column_values(column_name)
 
@@ -941,11 +1173,16 @@ class ToolDatabaseGUI(QMainWindow):
         if data is None:
             data, sql_columns = fetch_tool_data()  # Fetch data and columns dynamically
         else:
-            sql_columns = self.column_names  # Assume provided data aligns with `self.column_names`
+            sql_columns = (
+                self.column_names
+            )  # Assume provided data aligns with `self.column_names`
 
         # Columns to hide (but still load into the table)
         hidden_columns = {
-            "ToolImageFileName", "ImageHash",  "ShapeParameter", "ShapeAttribute",
+            "ToolImageFileName",
+            "ImageHash",
+            "ShapeParameter",
+            "ShapeAttribute",
         }
 
         # Set headers and populate the table
@@ -959,16 +1196,22 @@ class ToolDatabaseGUI(QMainWindow):
             for col_idx, col_name in enumerate(sql_columns):
                 # Use the column name to map the value dynamically
                 value = row_data.get(col_name, None)
-                if col_name == 'ToolMaxRPM' and isinstance(value, int):
+                if col_name == "ToolMaxRPM" and isinstance(value, int):
                     # Format RPM with commas
                     value = f"{value:,}"
-                self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
+                self.table.setItem(
+                    row_idx,
+                    col_idx,
+                    QTableWidgetItem(str(value) if value is not None else ""),
+                )
 
         # Map schema field names in hidden_columns to their corresponding labels
         hidden_labels = {self.COLUMN_LABELS.get(col, col) for col in hidden_columns}
 
         # Hide specified columns
-        for col_idx, col_name in enumerate(headers):  # Use headers derived from COLUMN_LABELS
+        for col_idx, col_name in enumerate(
+            headers
+        ):  # Use headers derived from COLUMN_LABELS
             if col_name in hidden_labels:
                 self.table.setColumnHidden(col_idx, True)
 
@@ -990,12 +1233,21 @@ class ToolDatabaseGUI(QMainWindow):
         row = item.row()
 
         # Get header labels and map them back to field names
-        header_labels = [self.table.horizontalHeaderItem(col).text() for col in range(self.table.columnCount())]
-        field_mapping = {label: field for field, label in self.COLUMN_LABELS.items() if label in header_labels}
+        header_labels = [
+            self.table.horizontalHeaderItem(col).text()
+            for col in range(self.table.columnCount())
+        ]
+        field_mapping = {
+            label: field
+            for field, label in self.COLUMN_LABELS.items()
+            if label in header_labels
+        }
 
         # Extract row data using field names
         row_data = {
-            field_mapping.get(label, label): self.table.item(row, col_idx).text() if self.table.item(row, col_idx) else ""
+            field_mapping.get(label, label): self.table.item(row, col_idx).text()
+            if self.table.item(row, col_idx)
+            else ""
             for col_idx, label in enumerate(header_labels)
         }
 
@@ -1005,7 +1257,11 @@ class ToolDatabaseGUI(QMainWindow):
 
             if widget.layout():
                 # Handle custom widgets with layouts
-                inner_widget = widget.layout().itemAt(0).widget() if widget.layout().count() > 0 else None
+                inner_widget = (
+                    widget.layout().itemAt(0).widget()
+                    if widget.layout().count() > 0
+                    else None
+                )
                 if isinstance(inner_widget, QLineEdit):
                     inner_widget.setText(value)
                 elif isinstance(inner_widget, QTextEdit):
@@ -1021,15 +1277,15 @@ class ToolDatabaseGUI(QMainWindow):
                 elif isinstance(widget, QComboBox):
                     widget.setCurrentText(value)
 
-
         # Track the original shape
-        if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
+        if "Shape" in self.tool_inputs and isinstance(
+            self.tool_inputs["Shape"], QComboBox
+        ):
             self.original_shape = self.tool_inputs["Shape"].currentText()
 
         # Set the button to "Update" mode
         self.set_update_button_mode(is_edit_mode=True)
         self.update_table_with_non_direct_fields(row)
-
 
     def search_tools(self):
         """Start the debounce timer for search."""
@@ -1039,7 +1295,9 @@ class ToolDatabaseGUI(QMainWindow):
         """Perform the actual search operation."""
         keyword = self.search_input.text().strip()
         if keyword:
-            filtered_data, _ = fetch_filtered(keyword)  # Assume fetch_filtered handles searching
+            filtered_data, _ = fetch_filtered(
+                keyword
+            )  # Assume fetch_filtered handles searching
             self.load_data(filtered_data)
         else:
             self.load_data()  # Load all data when the input is empty
@@ -1103,7 +1361,11 @@ class ToolDatabaseGUI(QMainWindow):
 
             # Check if the widget is a container with a layout
             if widget.layout():
-                inner_widget = widget.layout().itemAt(0).widget() if widget.layout().count() > 0 else None
+                inner_widget = (
+                    widget.layout().itemAt(0).widget()
+                    if widget.layout().count() > 0
+                    else None
+                )
                 if isinstance(inner_widget, QLineEdit):
                     data[column] = inner_widget.text().strip()
                 elif isinstance(inner_widget, QTextEdit):
@@ -1117,16 +1379,21 @@ class ToolDatabaseGUI(QMainWindow):
                 elif isinstance(widget, QTextEdit):
                     data[column] = widget.toPlainText().strip()
                 elif isinstance(widget, QComboBox):
-                    data[column] = widget.currentText().strip() if widget.currentText() else None
+                    data[column] = (
+                        widget.currentText().strip() if widget.currentText() else None
+                    )
                 else:
                     data[column] = None  # Unsupported or unrecognized widget
 
         # Step 3: Serialize ShapeParameter and ShapeAttribute
-        data["ShapeParameter"] = json.dumps(shape_parameters) if shape_parameters else None
-        data["ShapeAttribute"] = json.dumps(shape_attributes) if shape_attributes else None
+        data["ShapeParameter"] = (
+            json.dumps(shape_parameters) if shape_parameters else None
+        )
+        data["ShapeAttribute"] = (
+            json.dumps(shape_attributes) if shape_attributes else None
+        )
 
         return data
-
 
     def add_tool(self, from_init=False):
         """
@@ -1140,7 +1407,11 @@ class ToolDatabaseGUI(QMainWindow):
             for field_name, widget in self.tool_inputs.items():
                 if widget.layout():
                     # Handle custom widgets with layouts
-                    inner_widget = widget.layout().itemAt(0).widget() if widget.layout().count() > 0 else None
+                    inner_widget = (
+                        widget.layout().itemAt(0).widget()
+                        if widget.layout().count() > 0
+                        else None
+                    )
                     if isinstance(inner_widget, QLineEdit):
                         inner_widget.clear()  # Clear QLineEdit
                     elif isinstance(inner_widget, QTextEdit):
@@ -1155,7 +1426,9 @@ class ToolDatabaseGUI(QMainWindow):
                         widget.setCurrentIndex(0)
 
             # Set default for Shape field
-            if "Shape" in self.tool_inputs and isinstance(self.tool_inputs["Shape"], QComboBox):
+            if "Shape" in self.tool_inputs and isinstance(
+                self.tool_inputs["Shape"], QComboBox
+            ):
                 self.tool_inputs["Shape"].setCurrentText("endmill.fcstd")
                 self.original_shape = None
 
@@ -1166,7 +1439,9 @@ class ToolDatabaseGUI(QMainWindow):
             self.set_update_button_mode(is_edit_mode=False)
 
             if not from_init:
-                QMessageBox.information(self, "Add Tool", "Fields cleared. You can now add a new tool.")
+                QMessageBox.information(
+                    self, "Add Tool", "Fields cleared. You can now add a new tool."
+                )
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
@@ -1187,7 +1462,7 @@ class ToolDatabaseGUI(QMainWindow):
                 self.update_table_with_non_direct_fields(current_row)
         else:
             # Clear dependent fields and non-direct fields table
-            #self.clear_dependent_fields()
+            # self.clear_dependent_fields()
             self.update_table_with_non_direct_fields(-1)  # Clear the table
 
     def update_tool(self):
@@ -1199,7 +1474,7 @@ class ToolDatabaseGUI(QMainWindow):
         the tool to the wiki if applicable.
         """
         progress = None
-        #try:
+        # try:
         tool_number = self.get_field_text("ToolNumber")
         if not tool_number:
             raise ValueError("ToolNumber is required.")
@@ -1222,7 +1497,9 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Perform save and publish operations
         all_data, columns = fetch_tool_data()
-        existing_tool_numbers = [str(row["ToolNumber"]) for row in all_data]  # Access by key
+        existing_tool_numbers = [
+            str(row["ToolNumber"]) for row in all_data
+        ]  # Access by key
         data = self.get_form_data()
         operation_type = "updated" if tool_number in existing_tool_numbers else "added"
 
@@ -1244,24 +1521,38 @@ class ToolDatabaseGUI(QMainWindow):
                 QApplication.processEvents()
 
             # Perform the publishing operation with progress updates
-            result = wiki_main(tool_number=int(tool_number), progress_callback=progress_update)
+            result = wiki_main(
+                tool_number=int(tool_number), progress_callback=progress_update
+            )
 
             if result["status"] == "success":
-                QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and published to the wiki!")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Tool {tool_number} {operation_type} and published to the wiki!",
+                )
             else:
-                QMessageBox.warning(self, "Partial Success", f"Tool {tool_number} {operation_type}, but failed to publish to the wiki.")
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"Tool {tool_number} {operation_type}, but failed to publish to the wiki.",
+                )
         else:
-                QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and updated in the database.")
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Tool {tool_number} {operation_type} and updated in the database.",
+            )
 
         self.set_update_button_mode(is_edit_mode=True)
         self.load_data()
 
-    # except sqlite3.Error as db_error:
-    #     QMessageBox.critical(self, "Database Error", f"Failed to {operation_type} tool {tool_number}: {db_error}")
-    # except Exception as e:
-    #     QMessageBox.critical(self, "Error", str(e))
+        # except sqlite3.Error as db_error:
+        #     QMessageBox.critical(self, "Database Error", f"Failed to {operation_type} tool {tool_number}: {db_error}")
+        # except Exception as e:
+        #     QMessageBox.critical(self, "Error", str(e))
         if progress:
-                progress.close()
+            progress.close()
 
     def publish_all_tools(self):
         """
@@ -1298,12 +1589,22 @@ class ToolDatabaseGUI(QMainWindow):
             QApplication.processEvents()
 
             if result["status"] == "success":
-                QMessageBox.information(self, "Success", "All tools have been successfully published to the wiki!")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    "All tools have been successfully published to the wiki!",
+                )
             else:
-                QMessageBox.warning(self, "Partial Success", f"Some tools may have failed to publish: {result['message']}")
+                QMessageBox.warning(
+                    self,
+                    "Partial Success",
+                    f"Some tools may have failed to publish: {result['message']}",
+                )
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"An error occurred while publishing tools: {str(e)}")
+            QMessageBox.critical(
+                self, "Error", f"An error occurred while publishing tools: {str(e)}"
+            )
         finally:
             progress.close()
 
@@ -1320,7 +1621,11 @@ class ToolDatabaseGUI(QMainWindow):
         if widget:
             if widget.layout():
                 # Access the first widget in the layout (e.g., QLineEdit in custom widgets)
-                inner_widget = widget.layout().itemAt(0).widget() if widget.layout().count() > 0 else None
+                inner_widget = (
+                    widget.layout().itemAt(0).widget()
+                    if widget.layout().count() > 0
+                    else None
+                )
                 if isinstance(inner_widget, QLineEdit):
                     return inner_widget.text().strip()
             elif isinstance(widget, QLineEdit):
@@ -1350,7 +1655,7 @@ class ToolDatabaseGUI(QMainWindow):
                 self,
                 "Confirm Deletion",
                 f"Are you sure you want to delete Tool Number {tool_number}, its wiki page, and associated image?",
-                QMessageBox.Yes | QMessageBox.No
+                QMessageBox.Yes | QMessageBox.No,
             )
 
             if confirm == QMessageBox.Yes:
@@ -1374,7 +1679,7 @@ class ToolDatabaseGUI(QMainWindow):
 
                 if self.wiki_publish_enabled:
                     # Extract credentials and session
-                    api_url = 'https://wiki.knoxmakers.org/api.php'
+                    api_url = "https://wiki.knoxmakers.org/api.php"
                     session = wiki_main(return_session=True)
 
                     if not session:
@@ -1388,42 +1693,75 @@ class ToolDatabaseGUI(QMainWindow):
                         QApplication.processEvents()
                         page_response = delete_wiki_item(session, api_url, page_title)
                         if "delete" not in page_response:
-                            error_message = page_response.get("error", {}).get("info", "Unknown error occurred.")
-                            QMessageBox.warning(self, "Partial Success", f"Tool {tool_number}'s wiki page could not be deleted: {error_message}")
+                            error_message = page_response.get("error", {}).get(
+                                "info", "Unknown error occurred."
+                            )
+                            QMessageBox.warning(
+                                self,
+                                "Partial Success",
+                                f"Tool {tool_number}'s wiki page could not be deleted: {error_message}",
+                            )
                     except Exception as e:
-                        QMessageBox.warning(self, "Error", f"Failed to delete the wiki page: {str(e)}")
+                        QMessageBox.warning(
+                            self, "Error", f"Failed to delete the wiki page: {str(e)}"
+                        )
 
                     # Attempt to delete the associated image
                     try:
                         progress.setLabelText("Deleting associated image...")
                         progress.setValue(2)
                         QApplication.processEvents()
-                        image_title = self.tool_inputs["ToolImageFileName"].text() or f"Tool_{tool_number}.png"
-                        image_response = delete_wiki_item(session, api_url, image_title, is_media=True)
+                        image_title = (
+                            self.tool_inputs["ToolImageFileName"].text()
+                            or f"Tool_{tool_number}.png"
+                        )
+                        image_response = delete_wiki_item(
+                            session, api_url, image_title, is_media=True
+                        )
                         if "delete" not in image_response:
-                            error_message = image_response.get("error", {}).get("info", "Unknown error occurred.")
-                            QMessageBox.warning(self, "Partial Success", f"Tool {tool_number}'s image could not be deleted: {error_message}")
+                            error_message = image_response.get("error", {}).get(
+                                "info", "Unknown error occurred."
+                            )
+                            QMessageBox.warning(
+                                self,
+                                "Partial Success",
+                                f"Tool {tool_number}'s image could not be deleted: {error_message}",
+                            )
                     except Exception as e:
-                        QMessageBox.warning(self, "Error", f"Failed to delete the associated image: {str(e)}")
+                        QMessageBox.warning(
+                            self,
+                            "Error",
+                            f"Failed to delete the associated image: {str(e)}",
+                        )
 
-                    #Always update the index page
+                    # Always update the index page
                     progress.setLabelText("Updating the index page...")
                     progress.setValue(3)
                     QApplication.processEvents()
                     try:
                         index_page_content = generate_index_page_content()
                         generate_tools_json()
-                        upload_wiki_page(session, api_url, "Nibblerbot/tools", index_page_content)
+                        upload_wiki_page(
+                            session, api_url, "Nibblerbot/tools", index_page_content
+                        )
                     except Exception as e:
-                        QMessageBox.warning(self, "Error", f"Failed to update the index page: {str(e)}")
+                        QMessageBox.warning(
+                            self, "Error", f"Failed to update the index page: {str(e)}"
+                        )
 
                     progress.setValue(4)
                     QApplication.processEvents()
-                QMessageBox.information(self, "Success", f"Tool {tool_number} deletion process completed.")
+                QMessageBox.information(
+                    self, "Success", f"Tool {tool_number} deletion process completed."
+                )
                 self.load_data()
 
         except sqlite3.Error as db_error:
-            QMessageBox.critical(self, "Database Error", f"Failed to delete tool {tool_number}: {db_error}")
+            QMessageBox.critical(
+                self,
+                "Database Error",
+                f"Failed to delete tool {tool_number}: {db_error}",
+            )
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             self.load_data()
@@ -1442,6 +1780,7 @@ class ToolDatabaseGUI(QMainWindow):
         """
         self.update_button.setText("Save" if not is_edit_mode else "Update")
 
+
 def center_window(window):
     """
     Centers a given window on the primary screen.
@@ -1452,10 +1791,13 @@ def center_window(window):
     window_geometry.moveCenter(screen_geometry.center())
     window.move(window_geometry.topLeft())
 
+
 class SplashScreen(QWidget):
     def __init__(self, image_path):
         super().__init__()
-        self.setWindowFlags(Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(
+            Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
         # Set up layout and background
@@ -1480,11 +1822,14 @@ class SplashScreen(QWidget):
 
         center_window(self)
 
+
 if __name__ == "__main__":
     app = QApplication([])
     app.setApplicationName("OpenBitLib")
     app.setApplicationDisplayName("OpenBitLib")
-    app.setWindowIcon(QIcon("icons/OpenBitLib-Icon-64.png"))  # Ensure the path is correct
+    app.setWindowIcon(
+        QIcon("icons/OpenBitLib-Icon-64.png")
+    )  # Ensure the path is correct
     app.setDesktopFileName("OpenBitLib.desktop")  # Match your desktop file name
 
     # Apply theme settings

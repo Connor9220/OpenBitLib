@@ -1,9 +1,18 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from db_utils import (
-    set_db_mode, delete, fetch_column_names, fetch_filtered, fetch_image_hash,
-    fetch_shapes, fetch_tool_data, fetch_tool_numbers_and_details,
-    fetch_unique_column_values, insert, update, update_image_hash
+    set_db_mode,
+    delete,
+    fetch_column_names,
+    fetch_filtered,
+    fetch_image_hash,
+    fetch_shapes,
+    fetch_tool_data,
+    fetch_tool_numbers_and_details,
+    fetch_unique_column_values,
+    insert,
+    update,
+    update_image_hash,
 )
 from auth_utils import verify_hmac, generate_hmac  # Assuming these are in auth_utils.py
 from settings import CONFIG  # For configuration settings
@@ -17,8 +26,10 @@ app = FastAPI()
 
 # Configuration settings
 TIME_WINDOW_SECONDS = CONFIG.get("hmac_time_window", 300)
-HMAC_ENABLED = CONFIG.get('api', {}).get('hmac_enabled', False)
-USED_NONCES = set()  # In-memory nonce store for simplicity; replace with persistent storage for production
+HMAC_ENABLED = CONFIG.get("api", {}).get("hmac_enabled", False)
+USED_NONCES = (
+    set()
+)  # In-memory nonce store for simplicity; replace with persistent storage for production
 
 set_db_mode("direct", None)
 
@@ -29,6 +40,7 @@ from starlette.responses import JSONResponse
 import json
 from datetime import datetime
 
+
 @app.middleware("http")
 async def hmac_validation_middleware(request: Request, call_next):
     """
@@ -38,7 +50,7 @@ async def hmac_validation_middleware(request: Request, call_next):
         if not HMAC_ENABLED:
             print("[INFO] HMAC validation is disabled")
             return await call_next(request)
-        
+
         # Clone the request body for POST/PUT/DELETE
         if request.method in ["POST", "PUT", "DELETE"]:
             try:
@@ -48,20 +60,23 @@ async def hmac_validation_middleware(request: Request, call_next):
 
                 # Reconstruct the request with the body restored
                 async def receive():
-                    return {"type": "http.request", "body": body_bytes, "more_body": False}
+                    return {
+                        "type": "http.request",
+                        "body": body_bytes,
+                        "more_body": False,
+                    }
 
                 request = Request(request.scope, receive, request._send)
             except json.JSONDecodeError:
                 print("[ERROR] Invalid JSON in request body")
                 return JSONResponse(
-                    status_code=400,
-                    content={"detail": "Invalid JSON in request body"}
+                    status_code=400, content={"detail": "Invalid JSON in request body"}
                 )
             except Exception as e:
                 print(f"[ERROR] Error processing request body: {str(e)}")
                 return JSONResponse(
                     status_code=400,
-                    content={"detail": f"Error processing request body: {str(e)}"}
+                    content={"detail": f"Error processing request body: {str(e)}"},
                 )
         else:
             query_params = dict(request.query_params)
@@ -76,8 +91,7 @@ async def hmac_validation_middleware(request: Request, call_next):
         if not signature:
             print("[ERROR] Missing signature")
             return JSONResponse(
-                status_code=403,
-                content={"detail": "Missing signature"}
+                status_code=403, content={"detail": "Missing signature"}
             )
 
         # Validate timestamp and nonce
@@ -87,8 +101,7 @@ async def hmac_validation_middleware(request: Request, call_next):
         if not timestamp or not nonce:
             print("[ERROR] Missing timestamp or nonce")
             return JSONResponse(
-                status_code=403,
-                content={"detail": "Missing timestamp or nonce"}
+                status_code=403, content={"detail": "Missing timestamp or nonce"}
             )
 
         try:
@@ -96,8 +109,7 @@ async def hmac_validation_middleware(request: Request, call_next):
         except ValueError:
             print("[ERROR] Invalid timestamp format")
             return JSONResponse(
-                status_code=403,
-                content={"detail": "Invalid timestamp format"}
+                status_code=403, content={"detail": "Invalid timestamp format"}
             )
 
         current_time = datetime.utcnow()
@@ -106,15 +118,14 @@ async def hmac_validation_middleware(request: Request, call_next):
             print(f"[ERROR] Timestamp outside valid time window: {time_difference}s")
             return JSONResponse(
                 status_code=403,
-                content={"detail": "Timestamp outside valid time window"}
+                content={"detail": "Timestamp outside valid time window"},
             )
 
         # Check nonce usage
         if nonce in USED_NONCES:
             print(f"[ERROR] Nonce has already been used: {nonce}")
             return JSONResponse(
-                status_code=403,
-                content={"detail": "Nonce has already been used"}
+                status_code=403, content={"detail": "Nonce has already been used"}
             )
         USED_NONCES.add(nonce)
 
@@ -127,8 +138,7 @@ async def hmac_validation_middleware(request: Request, call_next):
         if not verify_hmac(full_url, signature):
             print(f"[ERROR] Invalid signature for URL: {full_url}")
             return JSONResponse(
-                status_code=403,
-                content={"detail": "Invalid signature"}
+                status_code=403, content={"detail": "Invalid signature"}
             )
 
         # Proceed to the next middleware or endpoint
@@ -138,7 +148,9 @@ async def hmac_validation_middleware(request: Request, call_next):
         print(f"[ERROR] Server error during HMAC validation: {str(e)}")
         return JSONResponse(
             status_code=500,
-            content={"detail": f"Server error during HMAC validation: {str(e)}"})
+            content={"detail": f"Server error during HMAC validation: {str(e)}"},
+        )
+
 
 @app.delete("/delete/{table}/{id}")
 async def api_delete(table: str, id: int):
@@ -156,6 +168,7 @@ async def api_fetch_column_names(table: str):
         return {"column_names": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/image_hash/{tool_id}")
 async def api_fetch_image_hash(tool_id: int):
@@ -207,6 +220,7 @@ async def get_tool_data(tool_number: Optional[int] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/filtered")
 async def api_fetch_filtered(keyword: str):
     try:
@@ -214,6 +228,7 @@ async def api_fetch_filtered(keyword: str):
         return {"tools": tools, "columns": columns}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/tool_numbers_and_details")
 async def api_fetch_tool_numbers_and_details():
@@ -223,13 +238,14 @@ async def api_fetch_tool_numbers_and_details():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/unique_column_values/{table}/{column}")
 async def api_fetch_unique_column_values(table: str, column: str):
     try:
         result = fetch_unique_column_values(column)
         return {"unique_values": result}
     except Exception as e:
-       raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/insert/{table}")
@@ -247,7 +263,7 @@ async def api_update(table: str, id: int, data: dict):
         result = update(id, data)
         return {"status": "success", "result": result}
     except Exception as e:
-       raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/update_image_hash/{tool_id}")
@@ -261,4 +277,5 @@ async def api_update_image_hash(tool_id: int, hash_value: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="127.0.0.1", port=8000)

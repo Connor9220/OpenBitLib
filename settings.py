@@ -3,6 +3,7 @@ import os
 
 CONFIG_FILE = "config.yaml"
 
+
 def load_config(config_file=CONFIG_FILE):
     """
     Load the YAML configuration file.
@@ -15,6 +16,7 @@ def load_config(config_file=CONFIG_FILE):
     with open(config_file, "r") as file:
         config = yaml.safe_load(file)
     return config
+
 
 # Load the entire configuration
 CONFIG = load_config()

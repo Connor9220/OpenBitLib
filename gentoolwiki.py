@@ -22,6 +22,7 @@ bits_file_location = config["file_paths"]["bits_file_location"]
 library_file_location = config["file_paths"]["library_file_location"]
 qr_images_location = config["file_paths"]["qr_images_location"]
 
+
 def sanitize_filename(name):
     """
     Sanitize the tool name for use as a filename:
@@ -40,12 +41,13 @@ def sanitize_filename(name):
         return ""
 
     # Replace " with "in"
-    name = name.replace('"', 'in')
+    name = name.replace('"', "in")
 
     # Replace any non-alphanumeric, non-space, and non-period characters with underscores
-    clean_name = re.sub(r'[<>:"/\\|?*\n\r]+', '_', name)
+    clean_name = re.sub(r'[<>:"/\\|?*\n\r]+', "_", name)
 
     return clean_name.strip()
+
 
 def format_measurement(value, convert_to_fraction=False, add_quotes=False):
     """
@@ -75,7 +77,7 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
         num_str, unit = match.groups()
 
         # Default to "in" if no unit is provided
-        if unit in ('"', ''):
+        if unit in ('"', ""):
             unit = "in"
 
         # Convert numeric part to float for calculations, but keep the original string
@@ -92,7 +94,11 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
                         # Mixed fraction format
                         whole = fraction.numerator // fraction.denominator
                         remainder = fraction.numerator % fraction.denominator
-                        formatted_value = f"{whole}-{remainder}/{fraction.denominator}" if remainder > 0 else f"{whole}"
+                        formatted_value = (
+                            f"{whole}-{remainder}/{fraction.denominator}"
+                            if remainder > 0
+                            else f"{whole}"
+                        )
                     else:
                         # Proper fraction
                         formatted_value = f"{fraction.numerator}/{fraction.denominator}"
@@ -102,7 +108,7 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
 
             # Handle quotes if needed
             if add_quotes:
-                return f"{formatted_value}\""
+                return f'{formatted_value}"'
             else:
                 return f"{formatted_value} in"
 
@@ -116,6 +122,7 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
 
     except ValueError:
         return value  # If invalid format, return as-is
+
 
 def extract_numeric_value_with_unit(value):
     """
@@ -143,6 +150,7 @@ def extract_numeric_value_with_unit(value):
         return numeric_value, unit
     return 0.0, "in"  # Default to 0.0 inches if parsing fails
 
+
 def convert_to_original_unit(value, unit):
     """
     Convert a value to its original unit.
@@ -162,6 +170,7 @@ def convert_to_original_unit(value, unit):
         return f"{value:.4f} in"  # Keep in inches
     else:
         return f"{value:.4f} {unit}"  # Default for unknown units
+
 
 def map_tool_to_json(tool, columns):
     """
@@ -189,7 +198,7 @@ def map_tool_to_json(tool, columns):
         "name": tool_data_dict.get("ToolName", "Unnamed Tool"),
         "shape": shape_name,
         "parameter": {},
-        "attribute": {}
+        "attribute": {},
     }
 
     # Fetch shape parameters and attributes using fetch_shapes
@@ -205,24 +214,36 @@ def map_tool_to_json(tool, columns):
     shape_attributes_list = json.loads(shape_data.ShapeAttribute or "[]")
 
     # Retrieve JSON values stored in the database
-    shape_parameters_values = json.loads(tool_data_dict.get("ShapeParameter", "{}") or "{}")
-    shape_attributes_values = json.loads(tool_data_dict.get("ShapeAttribute", "{}") or "{}")
+    shape_parameters_values = json.loads(
+        tool_data_dict.get("ShapeParameter", "{}") or "{}"
+    )
+    shape_attributes_values = json.loads(
+        tool_data_dict.get("ShapeAttribute", "{}") or "{}"
+    )
 
     # Special case: Handle bullnose.fcstd shape
     if shape_name == "bullnose.fcstd":
         try:
             # Extract numeric values and units
-            diameter, diameter_unit = extract_numeric_value_with_unit(tool_data_dict.get("ToolDiameter", "0"))
+            diameter, diameter_unit = extract_numeric_value_with_unit(
+                tool_data_dict.get("ToolDiameter", "0")
+            )
             nose_radius_value = shape_parameters_values.get("NoseRadius", "0")
-            nose_radius, nose_radius_unit = extract_numeric_value_with_unit(nose_radius_value)
+            nose_radius, nose_radius_unit = extract_numeric_value_with_unit(
+                nose_radius_value
+            )
 
             # Ensure both units are consistent
             if diameter_unit != nose_radius_unit:
-                raise ValueError(f"Unit mismatch: {diameter_unit} vs {nose_radius_unit}")
+                raise ValueError(
+                    f"Unit mismatch: {diameter_unit} vs {nose_radius_unit}"
+                )
 
             # Calculate FlatRadius
             flat_radius = (diameter / 2) - nose_radius
-            json_data["parameter"]["FlatRadius"] = convert_to_original_unit(flat_radius, diameter_unit)
+            json_data["parameter"]["FlatRadius"] = convert_to_original_unit(
+                flat_radius, diameter_unit
+            )
         except (ValueError, TypeError) as e:
             print(f"Invalid data for calculating FlatRadius: {e}")
 
@@ -232,17 +253,22 @@ def map_tool_to_json(tool, columns):
             # Skip NoseRadius for bullnose.fcstd
             continue
 
-        db_param = map_column_names(param, direction="to_sqlite")  # Convert to SQLite name for direct fields
+        db_param = map_column_names(
+            param, direction="to_sqlite"
+        )  # Convert to SQLite name for direct fields
         value = tool_data_dict.get(db_param, shape_parameters_values.get(param, None))
         json_data["parameter"][param] = value
 
     # Populate attributes: Prioritize direct fields
     for attr in shape_attributes_list:
-        db_attr = map_column_names(attr, direction="to_sqlite")  # Convert to SQLite name for direct fields
+        db_attr = map_column_names(
+            attr, direction="to_sqlite"
+        )  # Convert to SQLite name for direct fields
         value = tool_data_dict.get(db_attr, shape_attributes_values.get(attr, None))
         json_data["attribute"][attr] = value
 
     return json_data
+
 
 def map_column_names(param, direction="to_json"):
     """
@@ -271,7 +297,9 @@ def map_column_names(param, direction="to_json"):
         reverse_mapping = {v: k for k, v in mapping.items()}
         return reverse_mapping.get(param, param)
     else:
-        raise ValueError(f"Invalid direction: {direction}. Use 'to_json' or 'to_sqlite'.")
+        raise ValueError(
+            f"Invalid direction: {direction}. Use 'to_json' or 'to_sqlite'."
+        )
 
 
 def generate_json_files(tool_data, columns, output_directory):
@@ -303,6 +331,7 @@ def generate_json_files(tool_data, columns, output_directory):
             json.dump(tool_json, json_file, indent=2, ensure_ascii=False)
         print(f"Generated JSON file: {output_file}")
 
+
 def get_image_hash(file_path):
     """
     Compute the SHA-256 hash of a file.
@@ -323,6 +352,7 @@ def get_image_hash(file_path):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
+
 def generate_index_page_content():
     """
     Generate the main index page content for all tools with their numbers and names.
@@ -338,8 +368,12 @@ def generate_index_page_content():
     page_prefix = config["wiki_settings"]["page_prefix"]
 
     # Generate links with exact spacing
-    links = [f"[[{index_page}/{page_prefix} {tool['ToolNumber']}|Tool {tool['ToolNumber']} - {tool['ToolName']}]]<br>" for tool in tools]
+    links = [
+        f"[[{index_page}/{page_prefix} {tool['ToolNumber']}|Tool {tool['ToolNumber']} - {tool['ToolName']}]]<br>"
+        for tool in tools
+    ]
     return "\n".join(links)
+
 
 def generate_tools_json(output_path=None):
     """
@@ -371,6 +405,7 @@ def generate_tools_json(output_path=None):
         json.dump(tools_data, json_file, indent=2)
     print(f"Tools JSON generated at {output_path}")
 
+
 def create_session(api_url, username, password):
     """
     Create and return a session for MediaWiki API after logging in.
@@ -387,24 +422,26 @@ def create_session(api_url, username, password):
         requests.Session: An authenticated session for MediaWiki API calls.
     """
     session = requests.Session()
-    login_token_response = session.get(api_url, params={
-        'action': 'query',
-        'format': 'json',
-        'meta': 'tokens',
-        'type': 'login'
-    })
-    login_token = login_token_response.json()['query']['tokens']['logintoken']
+    login_token_response = session.get(
+        api_url,
+        params={"action": "query", "format": "json", "meta": "tokens", "type": "login"},
+    )
+    login_token = login_token_response.json()["query"]["tokens"]["logintoken"]
 
-    response = session.post(api_url, data={
-        'action': 'login',
-        'lgname': username,
-        'lgpassword': password,
-        'lgtoken': login_token,
-        'format': 'json'
-    })
-    if response.json().get('login', {}).get('result') != 'Success':
+    response = session.post(
+        api_url,
+        data={
+            "action": "login",
+            "lgname": username,
+            "lgpassword": password,
+            "lgtoken": login_token,
+            "format": "json",
+        },
+    )
+    if response.json().get("login", {}).get("result") != "Success":
         raise Exception("Failed to log in to MediaWiki API")
     return session
+
 
 def upload_image(session, api_url, file_path, file_name):
     """
@@ -422,27 +459,24 @@ def upload_image(session, api_url, file_path, file_name):
     Returns:
         dict: The response JSON from the MediaWiki API.
     """
-    edit_token_response = session.get(api_url, params={
-        'action': 'query',
-        'meta': 'tokens',
-        'type': 'csrf',
-        'format': 'json'
-    })
-    edit_token = edit_token_response.json()['query']['tokens']['csrftoken']
+    edit_token_response = session.get(
+        api_url,
+        params={"action": "query", "meta": "tokens", "type": "csrf", "format": "json"},
+    )
+    edit_token = edit_token_response.json()["query"]["tokens"]["csrftoken"]
 
-    with open(file_path, 'rb') as file:
-        files = {
-            'file': (file_name, file.read())
-        }
+    with open(file_path, "rb") as file:
+        files = {"file": (file_name, file.read())}
         data = {
-            'action': 'upload',
-            'filename': file_name,
-            'token': edit_token,
-            'format': 'json',
-            'ignorewarnings': 'true'  # This allows overwriting existing files
+            "action": "upload",
+            "filename": file_name,
+            "token": edit_token,
+            "format": "json",
+            "ignorewarnings": "true",  # This allows overwriting existing files
         }
         response = session.post(api_url, files=files, data=data)
         return response.json()
+
 
 def upload_image_if_changed(session, api_url, file_path, file_name, tool_number):
     """
@@ -480,6 +514,7 @@ def upload_image_if_changed(session, api_url, file_path, file_name, tool_number)
     else:
         print(f"Image {file_name} unchanged. No upload needed.")
 
+
 def upload_wiki_page(session, api_url, page_title, content):
     """
     Upload or update a wiki page using the MediaWiki API.
@@ -496,21 +531,23 @@ def upload_wiki_page(session, api_url, page_title, content):
     Returns:
         dict: The response JSON from the MediaWiki API.
     """
-    edit_token_response = session.get(api_url, params={
-        'action': 'query',
-        'meta': 'tokens',
-        'format': 'json'
-    })
-    edit_token = edit_token_response.json()['query']['tokens']['csrftoken']
+    edit_token_response = session.get(
+        api_url, params={"action": "query", "meta": "tokens", "format": "json"}
+    )
+    edit_token = edit_token_response.json()["query"]["tokens"]["csrftoken"]
 
-    response = session.post(api_url, data={
-        'action': 'edit',
-        'title': page_title,
-        'text': content,
-        'token': edit_token,
-        'format': 'json'
-    })
+    response = session.post(
+        api_url,
+        data={
+            "action": "edit",
+            "title": page_title,
+            "text": content,
+            "token": edit_token,
+            "format": "json",
+        },
+    )
     return response.json()
+
 
 def generate_qr_code(tool_number, base_url=None):
     """
@@ -529,7 +566,9 @@ def generate_qr_code(tool_number, base_url=None):
     """
     base_url = base_url or config["qr_code_settings"].get("base_url", "")
     qr_data = f"{base_url}/tool_{tool_number}"
-    qr_file_name = os.path.join(config["file_paths"]["qr_images_location"], f"tool_{tool_number}_qr.png")
+    qr_file_name = os.path.join(
+        config["file_paths"]["qr_images_location"], f"tool_{tool_number}_qr.png"
+    )
 
     # Generate the QR code
     qr = qrcode.QRCode(
@@ -542,23 +581,26 @@ def generate_qr_code(tool_number, base_url=None):
     qr.make(fit=True)
     new_img = qr.make_image(fill_color="black", back_color="white")
     temp_buffer = BytesIO()
-    new_img.save(temp_buffer, format='PNG')
+    new_img.save(temp_buffer, format="PNG")
     temp_buffer.seek(0)
     new_data = temp_buffer.read()
 
     # Check if the file exists and compare its content
     if os.path.exists(qr_file_name):
-        with open(qr_file_name, 'rb') as existing_file:
+        with open(qr_file_name, "rb") as existing_file:
             existing_data = existing_file.read()
         if existing_data == new_data:
-            print(f"QR code for tool {tool_number} has not changed, skipping regeneration.")
+            print(
+                f"QR code for tool {tool_number} has not changed, skipping regeneration."
+            )
             return qr_file_name
 
     # Save the new QR code
-    with open(qr_file_name, 'wb') as file:
+    with open(qr_file_name, "wb") as file:
         file.write(new_data)
     print(f"QR code saved as {qr_file_name}")
     return qr_file_name
+
 
 def delete_wiki_item(session, api_url, title, is_media=False):
     """
@@ -578,16 +620,21 @@ def delete_wiki_item(session, api_url, title, is_media=False):
     """
     try:
         # Fetch edit token
-        token_response = session.get(api_url, params={
-            'action': 'query',
-            'meta': 'tokens',
-            'format': 'json'
-        })
+        token_response = session.get(
+            api_url, params={"action": "query", "meta": "tokens", "format": "json"}
+        )
         token_response.raise_for_status()  # Raise an error for HTTP issues
-        edit_token = token_response.json().get('query', {}).get('tokens', {}).get('csrftoken', None)
+        edit_token = (
+            token_response.json()
+            .get("query", {})
+            .get("tokens", {})
+            .get("csrftoken", None)
+        )
 
         if not edit_token:
-            raise ValueError("Failed to retrieve CSRF token for deleting the wiki item.")
+            raise ValueError(
+                "Failed to retrieve CSRF token for deleting the wiki item."
+            )
 
         # Prepare the title for deletion
         if is_media:
@@ -595,18 +642,18 @@ def delete_wiki_item(session, api_url, title, is_media=False):
 
         # Perform the delete action
         delete_params = {
-            'action': 'delete',
-            'title': title,
-            'token': edit_token,
-            'format': 'json'
+            "action": "delete",
+            "title": title,
+            "token": edit_token,
+            "format": "json",
         }
         response = session.post(api_url, data=delete_params)
         response.raise_for_status()  # Raise an error for HTTP issues
         response_data = response.json()
 
         # Check for errors in the response
-        if 'error' in response_data:
-            error_message = response_data['error'].get('info', 'Unknown error')
+        if "error" in response_data:
+            error_message = response_data["error"].get("info", "Unknown error")
             raise ValueError(f"Failed to delete '{title}': {error_message}")
 
         return response_data
@@ -617,6 +664,7 @@ def delete_wiki_item(session, api_url, title, is_media=False):
     except Exception as e:
         print(f"Error occurred while deleting '{title}': {e}")
         raise
+
 
 def protect_wiki_page(session, api_url, page_title):
     """
@@ -634,23 +682,22 @@ def protect_wiki_page(session, api_url, page_title):
         dict: The response JSON from the MediaWiki API.
     """
     # Fetch edit token
-    token_response = session.get(api_url, params={
-        'action': 'query',
-        'meta': 'tokens',
-        'format': 'json'
-    })
-    edit_token = token_response.json()['query']['tokens']['csrftoken']
+    token_response = session.get(
+        api_url, params={"action": "query", "meta": "tokens", "format": "json"}
+    )
+    edit_token = token_response.json()["query"]["tokens"]["csrftoken"]
 
     # Set protection parameters
     protection_params = {
-        'action': 'protect',
-        'title': page_title,
-        'token': edit_token,
-        'protections': 'edit=sysop|move=sysop',  # Only sysops can edit/move
-        'format': 'json'
+        "action": "protect",
+        "title": page_title,
+        "token": edit_token,
+        "protections": "edit=sysop|move=sysop",  # Only sysops can edit/move
+        "format": "json",
     }
     response = session.post(api_url, data=protection_params)
     return response.json()
+
 
 def generate_wiki_page(tool_data):
     """
@@ -709,7 +756,9 @@ def generate_wiki_page(tool_data):
     # Add NoseRadius if present and format it
     nose_radius = shape_parameters.get("NoseRadius")
     if nose_radius:
-        formatted_nose_radius = format_measurement(nose_radius, convert_to_fraction=True, add_quotes=True)
+        formatted_nose_radius = format_measurement(
+            nose_radius, convert_to_fraction=True, add_quotes=True
+        )
         nose_radius_row = f"|-\n| '''Nose Radius''' || {formatted_nose_radius}\n"
     else:
         nose_radius_row = ""
@@ -717,16 +766,36 @@ def generate_wiki_page(tool_data):
     # Add CuttingRadius if present and format it
     cutting_radius = shape_parameters.get("CuttingRadius")
     if cutting_radius:
-        formatted_cutting_radius = format_measurement(cutting_radius, convert_to_fraction=True, add_quotes=True)
-        cutting_radius_row = f"|-\n| '''Cutting Radius''' || {formatted_cutting_radius}\n"
+        formatted_cutting_radius = format_measurement(
+            cutting_radius, convert_to_fraction=True, add_quotes=True
+        )
+        cutting_radius_row = (
+            f"|-\n| '''Cutting Radius''' || {formatted_cutting_radius}\n"
+        )
     else:
         cutting_radius_row = ""
 
     placeholders = [
-        "ToolNumber", "ToolName", "ToolType", "ToolShankSize", "Flutes", "OAL", "LOC",
-        "ToolMaxRPM", "ToolDiameter", "ToolMaterial", "ToolCoating", "PartNumber",
-        "ManufacturerName", "ToolOrderURL", "Materials", "SuggestedRPM", "SuggestedMaxDOC",
-        "AdditionalNotes", "SuggestedFeedRate", "ToolImageFileName"
+        "ToolNumber",
+        "ToolName",
+        "ToolType",
+        "ToolShankSize",
+        "Flutes",
+        "OAL",
+        "LOC",
+        "ToolMaxRPM",
+        "ToolDiameter",
+        "ToolMaterial",
+        "ToolCoating",
+        "PartNumber",
+        "ManufacturerName",
+        "ToolOrderURL",
+        "Materials",
+        "SuggestedRPM",
+        "SuggestedMaxDOC",
+        "AdditionalNotes",
+        "SuggestedFeedRate",
+        "ToolImageFileName",
     ]
 
     page_content = template
@@ -742,11 +811,17 @@ def generate_wiki_page(tool_data):
         if field == "ToolMaxRPM":
             formatted_value = "N/A" if str(value) == "-1" else f"{int(value):,}"
         elif field in ["ToolShankSize", "ToolDiameter"]:
-            formatted_value = format_measurement(value, convert_to_fraction=True, add_quotes=True)
+            formatted_value = format_measurement(
+                value, convert_to_fraction=True, add_quotes=True
+            )
         elif field in ["OAL", "LOC"]:
             formatted_value = format_measurement(value, add_quotes=True)
         elif field == "ToolImageFileName":
-            formatted_value = str(value) if value else f"tool_{tool_data.get('ToolNumber', 'unknown')}.png"
+            formatted_value = (
+                str(value)
+                if value
+                else f"tool_{tool_data.get('ToolNumber', 'unknown')}.png"
+            )
         else:
             formatted_value = str(value) if value else "N/A"
 
@@ -755,11 +830,12 @@ def generate_wiki_page(tool_data):
 
     return page_content
 
+
 def main(return_session=False, tool_number=None, progress_callback=None):
     """
     Main function to handle publishing tools to the wiki with optional progress updates.
 
-    Manages tool publishing operations, including generating JSON files, 
+    Manages tool publishing operations, including generating JSON files,
     uploading wiki pages, handling images, and updating the index page.
 
     Args:
@@ -767,7 +843,7 @@ def main(return_session=False, tool_number=None, progress_callback=None):
                                          without performing any publishing.
         tool_number (int, optional): The specific tool number to process. If None,
                                      processes all tools.
-        progress_callback (function, optional): A callback function to update progress. 
+        progress_callback (function, optional): A callback function to update progress.
                                                 Accepts an integer progress value (0-100).
 
     Returns:
@@ -809,17 +885,23 @@ def main(return_session=False, tool_number=None, progress_callback=None):
 
         # Handle image upload if needed
         image_file_name = tool.get("ToolImageFileName") or f"tool_{tool_number}.png"
-        image_file_path = os.path.join(config["file_paths"]["bit_images"], image_file_name)
+        image_file_path = os.path.join(
+            config["file_paths"]["bit_images"], image_file_name
+        )
 
         if os.path.exists(image_file_path):
-            upload_image_if_changed(session, api_url, image_file_path, image_file_name, tool_number)
+            upload_image_if_changed(
+                session, api_url, image_file_path, image_file_name, tool_number
+            )
 
         # Generate QR code
         generate_qr_code(tool_number)
 
     # Update the index page
     index_page_content = generate_index_page_content()
-    upload_wiki_page(session, api_url, config["wiki_settings"]["index_page"], index_page_content)
+    upload_wiki_page(
+        session, api_url, config["wiki_settings"]["index_page"], index_page_content
+    )
     generate_tools_json()  # Generate consolidated JSON for the library
 
     if progress_callback:
@@ -830,9 +912,12 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     # except Exception as e:
     #     return {"status": "error", "message": str(e)}
 
+
 if __name__ == "__main__":
     # Standalone execution
-    input_val = input("Enter the tool number or press Enter to process all tools: ").strip()
+    input_val = input(
+        "Enter the tool number or press Enter to process all tools: "
+    ).strip()
     tool_number = int(input_val) if input_val else None
 
     result = main(tool_number=tool_number)
