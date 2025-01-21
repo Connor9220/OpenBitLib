@@ -115,19 +115,33 @@ HMAC_ENABLED = CONFIG.get("api", {}).get("hmac_enabled", False)
 engine = create_engine(DATABASE_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
-# Ensure tables are created
-Base.metadata.create_all(engine)
-
 
 def set_db_mode(mode, api_url=None):
     """
-    Set the database mode and API URL dynamically.
+    Set the database mode dynamically, falling back to API if SQL connection fails.
+
     :param mode: 'direct' or 'api'
     :param api_url: Base URL for API requests (if mode is 'api')
     """
     global DB_MODE, API_URL
     DB_MODE = mode
     API_URL = api_url
+
+    if mode == "direct":
+        # Test SQL connection
+        try:
+            # Ensure tables are created
+            Base.metadata.create_all(engine)
+            with Session() as session:
+                session.execute("SELECT 1")  # Simple query to test the connection
+                print("[INFO] Database connection successful.")
+        except Exception as e:
+            print(f"[ERROR] SQL connection failed: {str(e)}. Falling back to API mode.")
+            DB_MODE = "api"
+            if not api_url:
+                raise RuntimeError(
+                    "API URL must be provided when falling back to API mode."
+                )
 
 
 def make_api_request(method, endpoint, data=None):

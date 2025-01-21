@@ -46,7 +46,7 @@ from settings import load_config
 config = load_config()
 
 API_URL = config.get("api", {}).get("url", "http://127.0.0.0:8000")
-DB_MODE = "api"
+DB_MODE = config.get("api", {}).get("mode", "direct")
 
 set_db_mode(DB_MODE, API_URL)
 
