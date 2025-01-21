@@ -25,6 +25,12 @@ from settings import load_config
 
 # Load the configuration
 config = load_config()
+
+API_URL = config.get('api', {}).get('url', 'http://127.0.0.0:8000')
+DB_MODE = "api"
+
+set_db_mode(DB_MODE, API_URL)
+
 class FilterableComboBox(QComboBox):
     def __init__(self, get_items_callback, parent=None):
         """
@@ -112,6 +118,8 @@ class ToolDatabaseGUI(QMainWindow):
     def __init__(self, config):
         super().__init__()
         self.confg = config
+
+        self.wiki_publish_enabled = config.get('wiki_settings', {}).get('publish', True)
 
         # Initialize the debounce timer for search
         self.search_timer = QTimer(self)
@@ -434,6 +442,8 @@ class ToolDatabaseGUI(QMainWindow):
         self.publish_all_button = QPushButton("Publish All Tools")
         self.publish_all_button.clicked.connect(self.publish_all_tools)
         self.button_layout.addWidget(self.publish_all_button)
+        if not self.wiki_publish_enabled:
+            self.publish_all_button.hide()  # Replace with the actual button variable
 
         self.layout.addLayout(self.button_layout)
 
@@ -810,7 +820,15 @@ class ToolDatabaseGUI(QMainWindow):
                     return f"{float(0):.{angle_precision}f} °"  # Apply precision
 
             elif field_type == "rpm":
-                return f"{int(value):,}"
+                # Format RPM fields
+                if value == "-1":
+                    return("-1")  # Allow -1 as a valid value
+                number = re.sub(r"[^\d]", "", value)  # Remove all non-digit characters
+                if number:  # Ensure there is something to convert
+                    number = int(number)  # Convert the cleaned value to an integer
+                    return f"{number:,}"  # Format with commas
+                else:
+                    return ("")  # Clear the field if it contains no valid number
 
             elif field_type == "number":
                 return re.sub(r"[^\d]", "", value)
@@ -941,6 +959,9 @@ class ToolDatabaseGUI(QMainWindow):
             for col_idx, col_name in enumerate(sql_columns):
                 # Use the column name to map the value dynamically
                 value = row_data.get(col_name, None)
+                if col_name == 'ToolMaxRPM' and isinstance(value, int):
+                    # Format RPM with commas
+                    value = f"{value:,}"
                 self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
 
         # Map schema field names in hidden_columns to their corresponding labels
@@ -1183,20 +1204,21 @@ class ToolDatabaseGUI(QMainWindow):
         if not tool_number:
             raise ValueError("ToolNumber is required.")
 
-        # Initialize progress dialog
-        progress = QProgressDialog(self)
-        progress.setWindowTitle("Processing")
-        progress.setLabelText("Saving tool data...")
-        progress.setCancelButton(None)  # Remove cancel button if unnecessary
-        progress.setMinimumSize(300, 100)
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setRange(0, 100)  # Indeterminate spinner
-        progress.show()
+        if self.wiki_publish_enabled:
+            # Initialize progress dialog
+            progress = QProgressDialog(self)
+            progress.setWindowTitle("Processing")
+            progress.setLabelText("Saving tool data...")
+            progress.setCancelButton(None)  # Remove cancel button if unnecessary
+            progress.setMinimumSize(300, 100)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setRange(0, 100)  # Indeterminate spinner
+            progress.show()
 
-        QApplication.processEvents()  # Ensure dialog updates
-        time.sleep(0.05)  # Add a short delay
-        progress.setValue(0)
-        QApplication.processEvents()
+            QApplication.processEvents()  # Ensure dialog updates
+            time.sleep(0.05)  # Add a short delay
+            progress.setValue(0)
+            QApplication.processEvents()
 
         # Perform save and publish operations
         all_data, columns = fetch_tool_data()
@@ -1209,24 +1231,27 @@ class ToolDatabaseGUI(QMainWindow):
         else:
             insert(data)
 
-        progress.setLabelText("Publishing tool to the wiki...")
-        QApplication.processEvents()  # Ensure dialog updates
-        time.sleep(0.05)  # Add a short delay
-        progress.setValue(0)
-        QApplication.processEvents()
-
-        # Define a progress update callback
-        def progress_update(percentage):
-            progress.setValue(percentage)
+        if self.wiki_publish_enabled:
+            progress.setLabelText("Publishing tool to the wiki...")
+            QApplication.processEvents()  # Ensure dialog updates
+            time.sleep(0.05)  # Add a short delay
+            progress.setValue(0)
             QApplication.processEvents()
 
-        # Perform the publishing operation with progress updates
-        result = wiki_main(tool_number=int(tool_number), progress_callback=progress_update)
+            # Define a progress update callback
+            def progress_update(percentage):
+                progress.setValue(percentage)
+                QApplication.processEvents()
 
-        if result["status"] == "success":
-            QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and published to the wiki!")
+            # Perform the publishing operation with progress updates
+            result = wiki_main(tool_number=int(tool_number), progress_callback=progress_update)
+
+            if result["status"] == "success":
+                QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and published to the wiki!")
+            else:
+                QMessageBox.warning(self, "Partial Success", f"Tool {tool_number} {operation_type}, but failed to publish to the wiki.")
         else:
-            QMessageBox.warning(self, "Partial Success", f"Tool {tool_number} {operation_type}, but failed to publish to the wiki.")
+                QMessageBox.information(self, "Success", f"Tool {tool_number} {operation_type} and updated in the database.")
 
         self.set_update_button_mode(is_edit_mode=True)
         self.load_data()
@@ -1330,68 +1355,70 @@ class ToolDatabaseGUI(QMainWindow):
 
             if confirm == QMessageBox.Yes:
                 # Initialize progress dialog
-                progress = QProgressDialog(self)
-                progress.setWindowTitle("Processing")
-                progress.setLabelText("Deleting tool...")
-                progress.setCancelButton(None)
-                progress.setMinimumSize(300, 100)
-                progress.setWindowModality(Qt.WindowModal)
-                progress.setRange(0, 4)
-                progress.show()
-                QApplication.processEvents()
-                time.sleep(0.05)  # Add a short delay
-                progress.setValue(0)
-                QApplication.processEvents()
+                if self.wiki_publish_enabled:
+                    progress = QProgressDialog(self)
+                    progress.setWindowTitle("Processing")
+                    progress.setLabelText("Deleting tool...")
+                    progress.setCancelButton(None)
+                    progress.setMinimumSize(300, 100)
+                    progress.setWindowModality(Qt.WindowModal)
+                    progress.setRange(0, 4)
+                    progress.show()
+                    QApplication.processEvents()
+                    time.sleep(0.05)  # Add a short delay
+                    progress.setValue(0)
+                    QApplication.processEvents()
 
                 # Perform database deletion
                 delete(tool_number)
 
-                # Extract credentials and session
-                api_url = 'https://wiki.knoxmakers.org/api.php'
-                session = wiki_main(return_session=True)
+                if self.wiki_publish_enabled:
+                    # Extract credentials and session
+                    api_url = 'https://wiki.knoxmakers.org/api.php'
+                    session = wiki_main(return_session=True)
 
-                if not session:
-                    raise ValueError("Failed to initialize wiki session.")
+                    if not session:
+                        raise ValueError("Failed to initialize wiki session.")
 
-                # Attempt to delete the wiki page
-                try:
-                    page_title = f"Nibblerbot/tools/tool_{tool_number}"
-                    progress.setLabelText("Deleting wiki page...")
-                    progress.setValue(1)
+                    # Attempt to delete the wiki page
+                    try:
+                        page_title = f"Nibblerbot/tools/tool_{tool_number}"
+                        progress.setLabelText("Deleting wiki page...")
+                        progress.setValue(1)
+                        QApplication.processEvents()
+                        page_response = delete_wiki_item(session, api_url, page_title)
+                        if "delete" not in page_response:
+                            error_message = page_response.get("error", {}).get("info", "Unknown error occurred.")
+                            QMessageBox.warning(self, "Partial Success", f"Tool {tool_number}'s wiki page could not be deleted: {error_message}")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Error", f"Failed to delete the wiki page: {str(e)}")
+
+                    # Attempt to delete the associated image
+                    try:
+                        progress.setLabelText("Deleting associated image...")
+                        progress.setValue(2)
+                        QApplication.processEvents()
+                        image_title = self.tool_inputs["ToolImageFileName"].text() or f"Tool_{tool_number}.png"
+                        image_response = delete_wiki_item(session, api_url, image_title, is_media=True)
+                        if "delete" not in image_response:
+                            error_message = image_response.get("error", {}).get("info", "Unknown error occurred.")
+                            QMessageBox.warning(self, "Partial Success", f"Tool {tool_number}'s image could not be deleted: {error_message}")
+                    except Exception as e:
+                        QMessageBox.warning(self, "Error", f"Failed to delete the associated image: {str(e)}")
+
+                    #Always update the index page
+                    progress.setLabelText("Updating the index page...")
+                    progress.setValue(3)
                     QApplication.processEvents()
-                    page_response = delete_wiki_item(session, api_url, page_title)
-                    if "delete" not in page_response:
-                        error_message = page_response.get("error", {}).get("info", "Unknown error occurred.")
-                        QMessageBox.warning(self, "Partial Success", f"Tool {tool_number}'s wiki page could not be deleted: {error_message}")
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to delete the wiki page: {str(e)}")
+                    try:
+                        index_page_content = generate_index_page_content()
+                        generate_tools_json()
+                        upload_wiki_page(session, api_url, "Nibblerbot/tools", index_page_content)
+                    except Exception as e:
+                        QMessageBox.warning(self, "Error", f"Failed to update the index page: {str(e)}")
 
-                # Attempt to delete the associated image
-                try:
-                    progress.setLabelText("Deleting associated image...")
-                    progress.setValue(2)
+                    progress.setValue(4)
                     QApplication.processEvents()
-                    image_title = self.tool_inputs["ToolImageFileName"].text() or f"Tool_{tool_number}.png"
-                    image_response = delete_wiki_item(session, api_url, image_title, is_media=True)
-                    if "delete" not in image_response:
-                        error_message = image_response.get("error", {}).get("info", "Unknown error occurred.")
-                        QMessageBox.warning(self, "Partial Success", f"Tool {tool_number}'s image could not be deleted: {error_message}")
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to delete the associated image: {str(e)}")
-
-                #Always update the index page
-                progress.setLabelText("Updating the index page...")
-                progress.setValue(3)
-                QApplication.processEvents()
-                try:
-                    index_page_content = generate_index_page_content()
-                    generate_tools_json()
-                    upload_wiki_page(session, api_url, "Nibblerbot/tools", index_page_content)
-                except Exception as e:
-                    QMessageBox.warning(self, "Error", f"Failed to update the index page: {str(e)}")
-
-                progress.setValue(4)
-                QApplication.processEvents()
                 QMessageBox.information(self, "Success", f"Tool {tool_number} deletion process completed.")
                 self.load_data()
 

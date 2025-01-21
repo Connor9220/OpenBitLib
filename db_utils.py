@@ -2,10 +2,13 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, Text, Fore
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy import text, select
 from settings import load_config
+from datetime import datetime
+import uuid
+from auth_utils import generate_hmac
+from settings import CONFIG  # For configuration settings
+import requests
 import re
-
-# Load configuration
-config = load_config()
+from urllib.parse import urlencode
 
 # Define SQLAlchemy Base and Tool Model
 Base = declarative_base()
@@ -81,32 +84,93 @@ class ToolTable(Base):
 
 # Dynamically construct the database URL
 def get_database_url():
-    db_type = config.get("database", {}).get("type", "sqlite").lower()
+    db_type = CONFIG.get("database", {}).get("type", "sqlite").lower()
 
     if db_type == "sqlite":
         # Use SQLite database path
-        return f"sqlite:///{config['file_paths']['database_path']}"
+        return f"sqlite:///{CONFIG['file_paths']['database_path']}"
     elif db_type in {"mysql", "postgresql"}:
         # Use MySQL or PostgreSQL credentials
-        username = config["database"].get("username", "")
-        password = config["database"].get("password", "")
-        host = config["database"].get("host", "localhost")
-        database = config["database"].get("database", "tools")
+        username = CONFIG["database"].get("username", "")
+        password = CONFIG["database"].get("password", "")
+        host = CONFIG["database"].get("host", "localhost")
+        database = CONFIG["database"].get("database", "tools")
         return f"{db_type}://{username}:{password}@{host}/{database}"
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
 
 # Initialize the database engine and session
 DATABASE_URL = get_database_url()
+HMAC_ENABLED = CONFIG.get('api', {}).get('hmac_enabled', False)
 engine = create_engine(DATABASE_URL, echo=False)
 Session = sessionmaker(bind=engine)
 
 # Ensure tables are created
 Base.metadata.create_all(engine)
 
+
+def set_db_mode(mode, api_url=None):
+    """
+    Set the database mode and API URL dynamically.
+    :param mode: 'direct' or 'api'
+    :param api_url: Base URL for API requests (if mode is 'api')
+    """
+    global DB_MODE, API_URL
+    DB_MODE = mode
+    API_URL = api_url
+
+def make_api_request(method, endpoint, data=None):
+    """
+    Helper function to make API requests with optional HMAC signing.
+
+    Args:
+        method (str): HTTP method (GET, POST, PUT, DELETE).
+        endpoint (str): API endpoint path (e.g., '/tools').
+        data (dict, optional): Payload for POST/PUT requests or query parameters for GET.
+
+    Returns:
+        dict: The response from the API as a JSON object.
+    """
+    if DB_MODE != "api" or not API_URL:
+        raise RuntimeError("API mode is not configured properly.")
+
+    # Construct the full URL
+    url = f"{API_URL}{endpoint}"  # Full URL including path
+    headers = {"Content-Type": "application/json"}
+    signed_data = data.copy() if data else {}
+
+    if HMAC_ENABLED:
+        # Add HMAC-related fields
+        signed_data["timestamp"] = datetime.utcnow().isoformat()
+        signed_data["nonce"] = str(uuid.uuid4())
+
+        # Serialize query parameters into the URL for HMAC generation
+        query_string = urlencode(signed_data)
+        separator = "&" if "?" in url else "?"
+        full_url = f"{url}{separator}{query_string}"
+
+        # Generate the signature
+        signed_data["signature"] = generate_hmac(full_url)
+
+    try:
+        if method == "GET":
+            # Send data as query parameters
+            response = requests.get(url, params=signed_data, headers=headers)
+        elif method in ("POST", "PUT", "DELETE"):
+            # Send data as JSON payload
+            response = requests.request(method, url, json=signed_data, headers=headers)
+        else:
+            raise ValueError(f"Unsupported HTTP method: {method}")
+
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"API request failed: {e}")
+
+
 def fetch_column_names(table_name):
     """
-    Fetch column names from the specified table in the database.
+    Fetch column names from the specified table in the database or via API.
 
     Args:
         table_name (str): The name of the table.
@@ -114,6 +178,11 @@ def fetch_column_names(table_name):
     Returns:
         List[str]: A list of column names.
     """
+    if DB_MODE == "api":
+        # Use the API to fetch column names and extract the list
+        response = make_api_request("GET", f"/column_names/{table_name}")
+        return response.get("column_names", [])  # Extract the list of column names
+
     with Session() as session:
         # Detect the database backend
         backend = session.bind.dialect.name
@@ -136,9 +205,10 @@ def fetch_column_names(table_name):
         else:
             raise ValueError(f"Unsupported database backend: {backend}")
 
+
 def fetch_tool_data(tool_number=None):
     """
-    Fetch tool data from the database.
+    Fetch tool data from the database or via API.
     Args:
         tool_number (str, optional): The tool number to fetch. If None, fetches all tools.
     Returns:
@@ -146,6 +216,18 @@ def fetch_tool_data(tool_number=None):
             - List[dict]: Tool data rows as a list of dictionaries.
             - List[str]: Column names corresponding to the data.
     """
+    if DB_MODE == "api":
+        endpoint = f"/tool_data"
+        if tool_number:
+            endpoint += f"?tool_number={tool_number}"
+        response = make_api_request("GET", endpoint)
+
+        # Ensure response includes both 'tools' and 'columns'
+        if not isinstance(response, dict) or "tools" not in response or "columns" not in response:
+            raise ValueError("Invalid API response format for tool data.")
+
+        return response["tools"], response["columns"]
+
     with Session() as session:
         query = select(Tool)
         if tool_number is not None:
@@ -165,7 +247,7 @@ def fetch_tool_data(tool_number=None):
 
 def fetch_filtered(keyword):
     """
-    Fetch tools filtered by a keyword.
+    Fetch tools filtered by a keyword from the database or via API.
 
     Args:
         keyword (str): The keyword to filter tools by.
@@ -175,6 +257,15 @@ def fetch_filtered(keyword):
             - List[dict]: Filtered tool data rows as dictionaries.
             - List[str]: Column names corresponding to the data.
     """
+    if DB_MODE == "api":
+        response =  make_api_request("GET", f"/filtered", data={"keyword": keyword})
+
+        # Ensure response includes both 'tools' and 'columns'
+        if not isinstance(response, dict) or "tools" not in response or "columns" not in response:
+            raise ValueError("Invalid API response format for tool data.")
+
+        return response["tools"], response["columns"]
+
     keyword = f"%{keyword}%"
     with Session() as session:
         # Query the database for matching tools
@@ -199,27 +290,45 @@ def fetch_filtered(keyword):
 
 def fetch_tool_numbers_and_details():
     """
-    Fetch all tool numbers and names from the database for generating file paths or other uses.
+    Fetch all tool numbers and names from the database or via API for generating file paths or other uses.
 
     Returns:
         List[dict]: A list of dictionaries, each containing `ToolNumber` and `ToolName`.
     """
+    if DB_MODE == "api":
+        response = make_api_request("GET", "/tool_numbers_and_details")
+        return response["tool_numbers_and_details"]
+
     with Session() as session:
         query = select(Tool.ToolNumber, Tool.ToolName).order_by(Tool.ToolNumber)
         tools = session.execute(query).all()
         return [{"ToolNumber": tool[0], "ToolName": tool[1]} for tool in tools]
 
+class ShapeData:
+    """
+    Wrapper class to emulate attribute access for shape data.
+    """
+    def __init__(self, shape_name, shape_parameter, shape_attribute):
+        self.ShapeName = shape_name
+        self.ShapeParameter = shape_parameter
+        self.ShapeAttribute = shape_attribute
+
 def fetch_shapes(shape_name=None):
-    """
-    Fetch shape names or specific shape details from the FCShapes table.
+    if DB_MODE == "api":
+        endpoint = f"/shapes"
+        if shape_name:
+            endpoint += f"?shape_name={shape_name}"
+        response = make_api_request("GET", endpoint)
 
-    Args:
-        shape_name (str, optional): The name of the shape to fetch. If None, fetches all shapes.
+        if shape_name:
+            # Convert the API response into an object-like structure to mimic SQLAlchemy row behavior
+            shape_data = response["shapes"]
+            return type("ShapeRow", (object,), shape_data)()
+        else:
+            result = response["shapes"]
+            return result
 
-    Returns:
-        List[str] or Row: If shape_name is None, returns a list of all shape names.
-                          If shape_name is provided, returns the database row for the shape.
-    """
+    # SQL mode remains unchanged
     try:
         with Session() as session:
             if shape_name:
@@ -241,20 +350,27 @@ def fetch_shapes(shape_name=None):
 
 def fetch_unique_column_values(column_name):
     """
-    Fetch unique values for a given column from the tools table.
+    Fetch unique values for a given column from the tools table, or via API.
+
     Args:
         column_name (str): The name of the column.
+
     Returns:
         List: A list of unique values.
     """
+    if DB_MODE == "api":
+        # Ensure API response matches SQL mode output
+        response = make_api_request("GET", f"/unique_column_values/tools/{column_name}")
+        return list(response["unique_values"])
+
     with Session() as session:
         query = text(f"SELECT DISTINCT {column_name} FROM tools WHERE {column_name} IS NOT NULL")
         result = session.execute(query).fetchall()
-    return [row[0] for row in result]
+        return [row[0] for row in result]
 
 def fetch_image_hash(tool_number):
     """
-    Fetch the stored image hash for a specific tool.
+    Fetch the stored image hash for a specific tool, or via API.
 
     Args:
         tool_number (int): The tool number.
@@ -262,16 +378,24 @@ def fetch_image_hash(tool_number):
     Returns:
         str: The stored image hash, or None if not found.
     """
+    if DB_MODE == "api":
+        response = make_api_request("GET", f"/image_hash/{tool_number}")
+        return response["image_hash"]
+
     with Session() as session:
         tool = session.query(Tool).filter_by(ToolNumber=tool_number).first()
         return tool.ImageHash if tool else None
 
 def insert(tool_data):
     """
-    Insert a new tool into the database and update tool and tool_properties tables.
+    Insert a new tool into the database and update tool and tool_properties tables, or via API.
+
     Args:
         tool_data (dict): Dictionary of tool data to insert.
     """
+    if DB_MODE == "api":
+        return make_api_request("POST", "/insert/tool", data=tool_data)
+
     with Session() as session:
         # Exclude ImageHash
         filtered_tool_data = {key: value for key, value in tool_data.items() if key != "ImageHash"}
@@ -308,30 +432,17 @@ def insert(tool_data):
 
         session.commit()
 
-def extract_numeric(value):
-    """
-    Extract the numeric portion from a string containing text and numbers.
-
-    Args:
-        value (str): The input string, e.g., '12.34 mm' or '1/2 in'.
-
-    Returns:
-        float: The numeric value, or None if no numeric portion is found.
-    """
-    if value:
-        match = re.search(r"[0-9.]+", value)
-        if match:
-            return float(match.group())
-    return None
-
 def update(tool_number, updated_data):
     """
-    Update an existing tool in the database, excluding certain fields.
+    Update an existing tool in the database, excluding certain fields, or via API.
 
     Args:
         tool_number (int): ToolNumber of the tool to update.
         updated_data (dict): Dictionary of updated data.
     """
+    if DB_MODE == "api":
+        return make_api_request("PUT", f"/update/tool/{tool_number}", data=updated_data)
+
     excluded_fields = {"ImageHash"}  # Fields to exclude from updates
 
     with Session() as session:
@@ -371,7 +482,7 @@ def update(tool_number, updated_data):
 
 def update_image_hash(tool_number, image_hash):
     """
-    Update the image hash for a specific tool in the database.
+    Update the image hash for a specific tool in the database or via API.
 
     Args:
         tool_number (int): The tool number whose image hash is being updated.
@@ -380,6 +491,9 @@ def update_image_hash(tool_number, image_hash):
     Returns:
         None
     """
+    if DB_MODE == "api":
+        return make_api_request("PUT", f"/update_image_hash/{tool_number}", data={"image_hash": image_hash})
+
     with Session() as session:
         query = select(Tool).filter_by(ToolNumber=tool_number)
         tool = session.execute(query).scalars().first()
@@ -389,10 +503,14 @@ def update_image_hash(tool_number, image_hash):
 
 def delete(tool_number):
     """
-    Delete a tool from the database.
+    Delete a tool from the database or via API.
+
     Args:
         tool_number (int): ToolNumber of the tool to delete.
     """
+    if DB_MODE == "api":
+        return make_api_request("DELETE", f"/delete/tool/{tool_number}")
+
     with Session() as session:
         # Delete from the main Tool table
         tool = session.execute(select(Tool).filter_by(ToolNumber=tool_number)).scalars().first()
@@ -431,7 +549,7 @@ def extract_numeric(value, field_type=None):
     value = value.replace(",", "")
 
     # Extract the numeric portion
-    match = re.search(r"[0-9.]+", value)
+    match = re.search(r"-?[0-9.]+", value)
     if not match:
         return None
 
