@@ -503,11 +503,12 @@ def upload_image_if_changed(session, api_url, file_path, file_name, tool_number)
     # Fetch the stored hash
     stored_hash = fetch_image_hash(tool_number)
 
+    update_image_hash(tool_number, current_hash)
+
     # Compare hashes and upload if they differ
     if current_hash != stored_hash:
         response = upload_image(session, api_url, file_path, file_name)
         if response.get("upload", {}).get("result") == "Success":
-            update_image_hash(tool_number, current_hash)
             print(f"Image {file_name} uploaded and hash updated.")
         else:
             print(f"Failed to upload image {file_name}: {response}")

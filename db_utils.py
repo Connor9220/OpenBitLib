@@ -485,6 +485,7 @@ def insert(tool_data):
         tool_properties_record = ToolPropertiesModel(
             tool_no=tool_data["ToolNumber"],
             max_rpm=tool_max_rpm_float,  # Use float value for ToolMaxRPM
+            tool_table_id=1,  # Always use tool_table_id = 1
         )
         session.add(tool_properties_record)
 
