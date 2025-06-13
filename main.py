@@ -267,9 +267,12 @@ async def api_update(table: str, id: int, data: dict):
 
 
 @app.put("/update_image_hash/{tool_id}")
-async def api_update_image_hash(tool_id: int, hash_value: str):
+async def api_update_image_hash(tool_id: int, data: dict):
     try:
-        result = update_image_hash(tool_id, hash_value)
+        image_hash = data.get("image_hash")
+        if not image_hash:
+            raise HTTPException(status_code=422, detail="Missing image_hash parameter")
+        result = update_image_hash(tool_id, image_hash)
         return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
