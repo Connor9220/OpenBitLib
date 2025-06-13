@@ -6,14 +6,15 @@ wiki_settings:
   api_url: "https://wiki.yoursite.org/api.php"
   index_page: "CNC/tools"
   page_prefix: "tool"
+  publish: false
 
 gui_settings:
   default_window_size: "1559x780"
   theme: "Fusion"
 
 file_paths:
-  bits_file_location: "../FreeCAD/Tools/Bit/"
-  library_file_location: "../FreeCAD/Tools/Library/Default.fctl"
+  bits_file_location: "FreeCAD/Tools/Bit/"
+  library_file_location: "FreeCAD/Tools/Library/Default.fctl"
   qr_images_location: "qrImages"
   bit_images: "BitImages"
   database_path: "tools.db"
