@@ -141,6 +141,25 @@ async def hmac_validation_middleware(request: Request, call_next):
                 status_code=403, content={"detail": "Invalid signature"}
             )
 
+        # IMPORTANT: Remove HMAC fields from query_params before passing to endpoints
+        if request.method in ["POST", "PUT", "DELETE"]:
+            # For request bodies, we need to modify the body
+            query_params.pop("timestamp", None)
+            query_params.pop("nonce", None)
+
+            # Serialize the cleaned data back to JSON
+            clean_body = json.dumps(query_params).encode("utf-8")
+
+            # Create a new request with the cleaned body
+            async def clean_receive():
+                return {
+                    "type": "http.request",
+                    "body": clean_body,
+                    "more_body": False,
+                }
+
+            request = Request(request.scope, clean_receive, request._send)
+
         # Proceed to the next middleware or endpoint
         return await call_next(request)
 
