@@ -22,6 +22,10 @@ bits_file_location = config["file_paths"]["bits_file_location"]
 library_file_location = config["file_paths"]["library_file_location"]
 qr_images_location = config["file_paths"]["qr_images_location"]
 
+# Initialize DB_MODE - Add this section
+API_URL = config.get("api", {}).get("url", "http://127.0.0.0:8000")
+DB_MODE = config.get("api", {}).get("mode", "direct")
+set_db_mode(DB_MODE, API_URL)  # This will initialize the DB_MODE in db_utils
 
 def sanitize_filename(name):
     """
