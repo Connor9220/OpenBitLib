@@ -112,7 +112,7 @@ def get_database_url():
 # Initialize the database engine and session
 DATABASE_URL = get_database_url()
 HMAC_ENABLED = CONFIG.get("api", {}).get("hmac_enabled", False)
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 Session = sessionmaker(bind=engine)
 
 

@@ -297,6 +297,17 @@ async def api_update_image_hash(tool_id: int, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from db_utils import set_db_mode
+        set_db_mode("direct", None)  # or your preferred mode
+        # Optionally, run a test query here
+        print("[INFO] Database connection initialized at startup.")
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize DB at startup: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
 

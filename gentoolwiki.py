@@ -27,6 +27,7 @@ API_URL = config.get("api", {}).get("url", "http://127.0.0.0:8000")
 DB_MODE = config.get("api", {}).get("mode", "direct")
 set_db_mode(DB_MODE, API_URL)  # This will initialize the DB_MODE in db_utils
 
+
 def sanitize_filename(name):
     """
     Sanitize the tool name for use as a filename:
@@ -306,6 +307,25 @@ def map_column_names(param, direction="to_json"):
         )
 
 
+# Convert string values that represent integers to actual integers
+def convert_string_to_int(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(value, dict) or isinstance(value, list):
+                convert_string_to_int(value)
+            elif isinstance(value, str):
+                # Only convert if the string represents an integer
+                if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
+                    obj[key] = int(value)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            if isinstance(item, dict) or isinstance(item, list):
+                convert_string_to_int(item)
+            elif isinstance(item, str):
+                if item.isdigit() or (item.startswith("-") and item[1:].isdigit()):
+                    obj[i] = int(item)
+
+
 def generate_json_files(tool_data, columns, output_directory):
     """
     Generate JSON files for tools based on database data.
@@ -327,6 +347,16 @@ def generate_json_files(tool_data, columns, output_directory):
     # Process each tool
     for tool in tool_data:
         tool_json = map_tool_to_json(tool, columns)
+
+        # Move everything from `attribute` to `parameter`
+        if "attribute" in tool_json:
+            tool_json["parameter"].update(tool_json.pop("attribute"))
+
+        # Ensure an empty `attribute` section exists
+        tool_json["attribute"] = tool_json.get("attribute", {})
+
+        convert_string_to_int(tool_json)
+
         tool_name = tool_json["name"]
         sanitized_tool_name = sanitize_filename(tool_name)
         output_file = os.path.join(output_directory, f"{sanitized_tool_name}.fctb")
