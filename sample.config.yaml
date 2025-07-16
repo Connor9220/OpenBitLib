@@ -60,3 +60,7 @@ qr_code_settings:
 logging:
   log_file: "openbitlib.log"
   log_level: "DEBUG"
+
+manifest_settings:
+  manifest_dir: "../YourCNC"
+  manifest_file: ".YourCNC_manifest.json"

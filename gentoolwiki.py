@@ -11,6 +11,7 @@ from fractions import Fraction
 import re
 from settings import load_config
 from db_utils import *
+from generate_manifest import main as generate_manifest_main
 
 # Load the configuration
 config = load_config()
@@ -349,11 +350,11 @@ def generate_json_files(tool_data, columns, output_directory):
         tool_json = map_tool_to_json(tool, columns)
 
         # Move everything from `attribute` to `parameter`
-        if "attribute" in tool_json:
-            tool_json["parameter"].update(tool_json.pop("attribute"))
+        # if "attribute" in tool_json:
+        #     tool_json["parameter"].update(tool_json.pop("attribute"))
 
-        # Ensure an empty `attribute` section exists
-        tool_json["attribute"] = tool_json.get("attribute", {})
+        # # Ensure an empty `attribute` section exists
+        # tool_json["attribute"] = tool_json.get("attribute", {})
 
         convert_string_to_int(tool_json)
 
@@ -938,6 +939,18 @@ def main(return_session=False, tool_number=None, progress_callback=None):
         session, api_url, config["wiki_settings"]["index_page"], index_page_content
     )
     generate_tools_json()  # Generate consolidated JSON for the library
+
+    # Update the manifest after publishing
+    manifest_dir = config.get("manifest_settings", {}).get("manifest_dir", "../NibblerBOT/Manifest/")
+    manifest_file = config.get("manifest_settings", {}).get("manifest_file", "manifest.json")
+    manifest_path = os.path.join(manifest_dir, manifest_file)
+    source_dir = os.path.abspath(os.path.join(output_directory, "../../"))  # Adjust as needed
+
+    try:
+        generate_manifest_main(source_dir, manifest_path)
+        print(f"Manifest updated at {manifest_path}")
+    except Exception as e:
+        print(f"Failed to update manifest: {e}")
 
     if progress_callback:
         progress_callback(100)
