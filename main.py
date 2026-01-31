@@ -301,6 +301,7 @@ async def api_update_image_hash(tool_id: int, data: dict):
 async def startup_event():
     try:
         from db_utils import set_db_mode
+
         set_db_mode("direct", None)  # or your preferred mode
         # Optionally, run a test query here
         print("[INFO] Database connection initialized at startup.")

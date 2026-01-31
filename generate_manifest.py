@@ -2,11 +2,15 @@ import os
 import json
 import sys
 
+
 def list_files(directory, file_filter=None):
     return [
-        f for f in os.listdir(directory)
-        if os.path.isfile(os.path.join(directory, f)) and (file_filter(f) if file_filter else True)
+        f
+        for f in os.listdir(directory)
+        if os.path.isfile(os.path.join(directory, f))
+        and (file_filter(f) if file_filter else True)
     ]
+
 
 def main(source_dir, manifest_path):
     manifest = {}
@@ -17,6 +21,7 @@ def main(source_dir, manifest_path):
         "Tools/Library": os.path.join(source_dir, "Tools", "Library"),
         "Tools/Shape": os.path.join(source_dir, "Tools", "Shape"),
         "PostProcessor": os.path.join(source_dir, "PostProcessor"),
+        "Jobs": os.path.join(source_dir, "Jobs"),
     }
 
     # Scan each subdir
@@ -26,16 +31,11 @@ def main(source_dir, manifest_path):
         else:
             manifest[group] = []
 
-    # jobs: job_*.json files in source_dir
-    manifest["jobs"] = list_files(
-        source_dir,
-        file_filter=lambda f: f.startswith("job_") and f.endswith(".json")
-    )
-
     # Write manifest
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"Manifest written to {manifest_path}")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

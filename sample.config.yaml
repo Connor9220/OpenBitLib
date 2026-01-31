@@ -25,14 +25,6 @@ tool_settings:
   imperial_precision: 4
   metric_precision: 3
   angle_precision: 4
-  shape_fields:
-      endmill.fcstd: ["Chipload", "CuttingEdgeHeight", "SpindleDirection"]
-      ballend.fcstd: ["Chipload", "CuttingEdgeHeight"]
-      vbit.fcstd: ["CuttingEdgeAngle", "TipDiameter", "CuttingEdgeHeight"]
-      torus.fcstd: ["TorusRadius", "CuttingEdgeHeight", "Chipload", "SpindleDirection"]
-      drill.fcstd: ["TipAngle", "Chipload"]
-      slittingsaw.fcstd: ["BladeThickness", "CapDiameter", "CapHeight"]
-      probe.fcstd: ["ShaftDiameter", "SpindlePower"]
   fields_to_format:
       SuggestedMaxDOC: "dimension"
       ToolShankSize: "dimension"

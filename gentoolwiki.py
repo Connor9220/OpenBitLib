@@ -388,12 +388,16 @@ def get_image_hash(file_path):
     return sha256_hash.hexdigest()
 
 
+def make_anchor(header):
+    # Replace spaces and slashes with a single underscore, collapse multiple underscores
+    anchor = re.sub(r"[ /]+", "_", header)
+    return anchor
+
+
 def generate_index_page_content():
     """
-    Generate the main index page content for all tools with their numbers and names.
-
-    Returns:
-        str: The formatted wiki content for the index page.
+    Generate the main index page content for all tools with their numbers and names,
+    grouped by tool type headers, with a bookmark index at the top.
     """
     # Fetch tool numbers and names
     tools = fetch_tool_numbers_and_details()
@@ -402,12 +406,47 @@ def generate_index_page_content():
     index_page = config["wiki_settings"]["index_page"]
     page_prefix = config["wiki_settings"]["page_prefix"]
 
-    # Generate links with exact spacing
-    links = [
-        f"[[{index_page}/{page_prefix} {tool['ToolNumber']}|Tool {tool['ToolNumber']} - {tool['ToolName']}]]<br>"
-        for tool in tools
+    # Define tool group headers and their ranges
+    tool_groups = [
+        ((10, 19), "V-bits / Engraving"),
+        ((20, 29), "Upcut Endmills"),
+        ((30, 39), "Downcut Endmills"),
+        ((40, 49), "Compression Endmills"),
+        ((50, 59), "Ballnose Endmills"),
+        ((60, 69), "Surfacing Bits"),
+        ((70, 79), "Bowl & Tray"),
+        ((80, 89), "Roundover / Form Tools"),
+        ((90, 99), "Specialty Tools"),
+        ((101, 109), "Drill Bits"),
     ]
-    return "\n".join(links)
+
+    # Sort tools by ToolNumber
+    tools_sorted = sorted(tools, key=lambda t: int(t["ToolNumber"]))
+
+    # --- Create bookmarks/index at the top ---
+    bookmark_lines = ["===Tool Groups==="]
+    bookmark_lines.append('<span id="top"></span>\n')
+    for (start, end), header in tool_groups:
+        anchor = make_anchor(header)
+        bookmark_lines.append(f"[[#{anchor}|T{start}–T{end} / {header}]]<br>")
+    bookmark_lines.append("")  # Blank line after bookmarks
+
+    # --- Create grouped tool lists with anchors ---
+    output_lines = []
+    for (start, end), header in tool_groups:
+        anchor = make_anchor(header)
+        group_tools = [
+            tool for tool in tools_sorted if start <= int(tool["ToolNumber"]) <= end
+        ]
+        if group_tools:
+            output_lines.append(f"\n<span id=\"{anchor}\"></span>\n'''{header}'''")
+            for tool in group_tools:
+                output_lines.append(
+                    f"*[[{index_page}/{page_prefix} {tool['ToolNumber']}|Tool {tool['ToolNumber']} - {tool['ToolName']}]]"
+                )
+            output_lines.append("[[#Top|[Top]]]\n")  # Blank line between groups
+
+    return "\n".join(bookmark_lines + output_lines)
 
 
 def generate_tools_json(output_path=None):
@@ -753,7 +792,7 @@ def generate_wiki_page(tool_data):
 | '''Shank Size''' || [ToolShankSize]
 |-
 | '''Diameter''' || [ToolDiameter]
-[INSERT_NOSERADIUS][INSERT_CUTTINGRADIUS]|-
+[INSERT_NOSERADIUS][INSERT_CUTTINGRADIUS][INSERT_TAPERANGLE][INSERT_TAPERDIAMETER]|-
 | '''Flutes (FL)''' || [Flutes]
 |-
 | '''Overall Length (OAL)''' || [OAL]
@@ -770,7 +809,7 @@ def generate_wiki_page(tool_data):
 |-
 | '''Manufacturer''' || [ManufacturerName]
 |-
-| '''Image''' || [[File:[ToolImageFileName]|frameless|left]]
+| '''Image''' || [[File:[ToolImageFileName]|thumb|left]]
 |-
 | '''Order Link''' || [[[ToolOrderURL] Click here to purchase this tool]]
 |}
@@ -811,6 +850,28 @@ def generate_wiki_page(tool_data):
     else:
         cutting_radius_row = ""
 
+    # Add TaperAngle if present and format it
+    taper_angle = shape_parameters.get("TaperAngle")
+    if taper_angle:
+        formatted_taper_angle = format_measurement(
+            taper_angle, convert_to_fraction=True, add_quotes=True
+        )
+        taper_angle_row = f"|-\n| '''Taper Angle''' || {formatted_taper_angle}\n"
+    else:
+        taper_angle_row = ""
+
+    # Add TaperDiameter if present and format it
+    taper_diameter = shape_parameters.get("TaperDiameter")
+    if taper_diameter:
+        formatted_taper_diameter = format_measurement(
+            taper_diameter, convert_to_fraction=True, add_quotes=True
+        )
+        taper_diameter_row = (
+            f"|-\n| '''Taper Diameter''' || {formatted_taper_diameter}\n"
+        )
+    else:
+        taper_diameter_row = ""
+
     placeholders = [
         "ToolNumber",
         "ToolName",
@@ -839,6 +900,8 @@ def generate_wiki_page(tool_data):
     # Replace placeholders in the template
     page_content = page_content.replace("[INSERT_NOSERADIUS]", nose_radius_row)
     page_content = page_content.replace("[INSERT_CUTTINGRADIUS]", cutting_radius_row)
+    page_content = page_content.replace("[INSERT_TAPERANGLE]", taper_angle_row)
+    page_content = page_content.replace("[INSERT_TAPERDIAMETER]", taper_diameter_row)
 
     for field in placeholders:
         value = tool_data.get(field, None)  # Access value using dictionary key
@@ -941,10 +1004,16 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     generate_tools_json()  # Generate consolidated JSON for the library
 
     # Update the manifest after publishing
-    manifest_dir = config.get("manifest_settings", {}).get("manifest_dir", "../NibblerBOT/Manifest/")
-    manifest_file = config.get("manifest_settings", {}).get("manifest_file", "manifest.json")
+    manifest_dir = config.get("manifest_settings", {}).get(
+        "manifest_dir", "../NibblerBOT/Manifest/"
+    )
+    manifest_file = config.get("manifest_settings", {}).get(
+        "manifest_file", "manifest.json"
+    )
     manifest_path = os.path.join(manifest_dir, manifest_file)
-    source_dir = os.path.abspath(os.path.join(output_directory, "../../"))  # Adjust as needed
+    source_dir = os.path.abspath(
+        os.path.join(output_directory, "../../")
+    )  # Adjust as needed
 
     try:
         generate_manifest_main(source_dir, manifest_path)

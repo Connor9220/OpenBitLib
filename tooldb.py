@@ -140,7 +140,7 @@ class FilterableComboBox(QComboBox):
 class ToolDatabaseGUI(QMainWindow):
     def __init__(self, config):
         super().__init__()
-        self.confg = config
+        self.config = config
 
         self.wiki_publish_enabled = config.get("wiki_settings", {}).get("publish", True)
 
@@ -174,43 +174,6 @@ class ToolDatabaseGUI(QMainWindow):
         theme = config.get("gui_settings", {}).get("theme", "Fusion")
         QApplication.setStyle(theme)
 
-        # Define shape fields dynamically
-        self.shape_fields = config.get("tool_settings", {}).get(
-            "shape_fields",
-            {
-                "endmill.fcstd": [
-                    "Chipload",
-                    "CuttingEdgeHeight",
-                    "SpindleDirection",
-                    "Stickout",
-                ],
-                "ballend.fcstd": ["Chipload", "CuttingEdgeHeight", "Stickout"],
-                "v-bit.fcstd": [
-                    "CuttingEdgeAngle",
-                    "TipDiameter",
-                    "CuttingEdgeHeight",
-                    "Stickout",
-                ],
-                "torus.fcstd": [
-                    "TorusRadius",
-                    "CuttingEdgeHeight",
-                    "Chipload",
-                    "SpindleDirection",
-                    "Stickout",
-                ],
-                "drill.fcstd": ["TipAngle", "Chipload", "Stickout"],
-                "slittingsaw.fcstd": ["BladeThickness", "CapDiameter", "CapHeight"],
-                "probe.fcstd": ["ShaftDiameter", "SpindlePower"],
-                "roundover.fcstd": [
-                    "CuttingRadius",
-                    "CuttingEdgeHeight",
-                    "TipDiameter",
-                    "Chipload",
-                    "Stickout",
-                ],
-            },
-        )
-
         # Fields to format dynamically
         self.fields_to_format = config.get("tool_settings", {}).get(
             "fields_to_format",
@@ -229,6 +192,8 @@ class ToolDatabaseGUI(QMainWindow):
                 "CapHeight": "dimension",
                 "CuttingEdgeAngle": "angle",
                 "TipAngle": "angle",
+                "TaperAngle": "angle",
+                "TaperDiameter": "dimension",
                 "ToolMaxRPM": "rpm",
                 "ToolNumber": "number",
                 "Flutes": "number",
@@ -261,6 +226,8 @@ class ToolDatabaseGUI(QMainWindow):
             "ToolImageFileName": "Image File",
             "Chipload": "Chipload",
             "TipAngle": "Tip Angle",
+            "TaperAngle": "Taper Angle",
+            "TaperDiameter": "Taper Diameter",
             "CuttingEdgeAngle": "Cutting Edge Angle",
             "TipDiameter": "Tip Diameter",
             "TorusRadius": "Torus Radius",
@@ -321,9 +288,11 @@ class ToolDatabaseGUI(QMainWindow):
                 "label": self.COLUMN_LABELS["ToolNumber"],
                 "widget": self.create_url_widget(
                     100,
-                    generate_url_callback=lambda tool_number: f"https://wiki.knoxmakers.org/Nibblerbot/tools/tool_{tool_number}"
-                    if tool_number
-                    else "",
+                    generate_url_callback=lambda tool_number: (
+                        f"https://wiki.knoxmakers.org/Nibblerbot/tools/tool_{tool_number}"
+                        if tool_number
+                        else ""
+                    ),
                 ),
                 "column": "left",
                 "width": 100,
@@ -1245,9 +1214,11 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Extract row data using field names
         row_data = {
-            field_mapping.get(label, label): self.table.item(row, col_idx).text()
-            if self.table.item(row, col_idx)
-            else ""
+            field_mapping.get(label, label): (
+                self.table.item(row, col_idx).text()
+                if self.table.item(row, col_idx)
+                else ""
+            )
             for col_idx, label in enumerate(header_labels)
         }
 
