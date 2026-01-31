@@ -13,11 +13,14 @@ gui_settings:
   theme: "Fusion"
 
 file_paths:
-  bits_file_location: "FreeCAD/Tools/Bit/"
-  library_file_location: "FreeCAD/Tools/Library/Default.fctl"
+  base_directory: "FreeCAD"
   qr_images_location: "qrImages"
   bit_images: "BitImages"
   database_path: "tools.db"
+
+freecad:
+  versions: ["v1-0", "v1-1", "v1-2"]
+  library_name: "Default.fctl"
 
 tool_settings:
   default_shape: "endmill.fcstd"
@@ -26,23 +29,23 @@ tool_settings:
   metric_precision: 3
   angle_precision: 4
   fields_to_format:
-      SuggestedMaxDOC: "dimension"
-      ToolShankSize: "dimension"
-      OAL: "dimension"
-      LOC: "dimension"
-      ToolDiameter: "dimension"
-      Chipload: "dimension"
-      TipDiameter: "dimension"
-      TorusRadius: "dimension"
-      ShaftDiameter: "dimension"
-      BladeThickness: "dimension"
-      CapDiameter: "dimension"
-      CapHeight: "dimension"
-      CuttingEdgeAngle: "angle"
-      TipAngle: "angle"
-      ToolMaxRPM: "rpm"
-      ToolNumber: "number"
-      Flutes: "number"
+    SuggestedMaxDOC: "dimension"
+    ToolShankSize: "dimension"
+    OAL: "dimension"
+    LOC: "dimension"
+    ToolDiameter: "dimension"
+    Chipload: "dimension"
+    TipDiameter: "dimension"
+    TorusRadius: "dimension"
+    ShaftDiameter: "dimension"
+    BladeThickness: "dimension"
+    CapDiameter: "dimension"
+    CapHeight: "dimension"
+    CuttingEdgeAngle: "angle"
+    TipAngle: "angle"
+    ToolMaxRPM: "rpm"
+    ToolNumber: "number"
+    Flutes: "number"
 
 qr_code_settings:
   base_url: "https://wiki.knoxmakers.org/Nibblerbot/tools/"

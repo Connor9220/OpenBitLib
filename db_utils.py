@@ -42,6 +42,7 @@ class Tool(Base):
     ImageHash = Column(Text)
     ShapeParameter = Column(Text)
     ShapeAttribute = Column(Text)
+    Units = Column(Text)  # Imperial or Metric - for FreeCAD v1.2+
 
 
 class ToolModel(Base):

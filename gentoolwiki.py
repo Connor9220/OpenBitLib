@@ -19,8 +19,6 @@ config = load_config()
 # Access settings
 wiki_username = config["wiki_credentials"]["username"]
 wiki_password = config["wiki_credentials"]["password"]
-bits_file_location = config["file_paths"]["bits_file_location"]
-library_file_location = config["file_paths"]["library_file_location"]
 qr_images_location = config["file_paths"]["qr_images_location"]
 
 # Initialize DB_MODE - Add this section
@@ -53,6 +51,59 @@ def sanitize_filename(name):
     clean_name = re.sub(r'[<>:"/\\|?*\n\r]+', "_", name)
 
     return clean_name.strip()
+
+
+def get_shape_type(shape_name):
+    """
+    Convert shape name from v1.0 format (with .fcstd extension) to v1.1/v1.2 format (without extension).
+    Capitalizes the shape name and handles special case for v-bit -> VBit.
+
+    Args:
+        shape_name (str): The shape name (e.g., "endmill.fcstd")
+
+    Returns:
+        str: The capitalized shape type without extension (e.g., "Endmill")
+    """
+    if not shape_name:
+        return shape_name
+
+    # Remove .fcstd extension if present
+    if shape_name.endswith(".fcstd"):
+        shape_name = shape_name[:-6]
+
+    # Special case for v-bit
+    if shape_name.lower() == "v-bit":
+        return "VBit"
+
+    # Capitalize the shape name
+    return shape_name.capitalize()
+
+
+def get_version_paths(version):
+    """
+    Generate file paths for a specific FreeCAD version based on base directory.
+
+    Args:
+        version (str): Version identifier (e.g., "v1-0", "v1-1", "v1-2")
+
+    Returns:
+        dict: Dictionary with 'bits_dir' and 'library_path' keys
+    """
+    base_dir = config["file_paths"]["base_directory"]
+    library_name = config["freecad"]["library_name"]
+
+    if version == "v1-0":
+        # v1.0 uses Tools/Bit/ structure
+        bits_dir = os.path.join(base_dir, "Tools", "Bit")
+        library_path = os.path.join(base_dir, "Tools", "Library", library_name)
+    else:
+        # v1.1+ uses CAMAssets/v1-x/Tools/Bit/ structure
+        bits_dir = os.path.join(base_dir, "CAMAssets", version, "Tools", "Bit")
+        library_path = os.path.join(
+            base_dir, "CAMAssets", version, "Tools", "Library", library_name
+        )
+
+    return {"bits_dir": bits_dir, "library_path": library_path}
 
 
 def format_measurement(value, convert_to_fraction=False, add_quotes=False):
@@ -327,17 +378,20 @@ def convert_string_to_int(obj):
                     obj[i] = int(item)
 
 
-def generate_json_files(tool_data, columns, output_directory):
+def generate_json_files(tool_data, columns, output_directory, version="v1-0"):
     """
-    Generate JSON files for tools based on database data.
-
-    Converts tool data into JSON files, with one file per tool, saved in the specified directory.
-    The filenames are sanitized versions of the tool names.
+    Generate JSON files for tools in specified FreeCAD version format.
 
     Args:
         tool_data (list of tuples): Tool data fetched from the database.
         columns (list): Column names corresponding to the tool data.
         output_directory (str): Directory where the JSON files will be saved.
+        version (str): FreeCAD version format (v1-0, v1-1, v1-2, etc.)
+
+    Version differences:
+        - v1-0: Separate 'parameter' and 'attribute' sections, 'shape' field with .fcstd extension
+        - v1-1: All in 'attribute' section, 'shape-type' field without .fcstd extension (capitalized)
+        - v1-2: Same as v1-1 but adds 'units' field at root level (Imperial or Metric)
 
     Returns:
         None
@@ -349,12 +403,31 @@ def generate_json_files(tool_data, columns, output_directory):
     for tool in tool_data:
         tool_json = map_tool_to_json(tool, columns)
 
-        # Move everything from `attribute` to `parameter`
-        # if "attribute" in tool_json:
-        #     tool_json["parameter"].update(tool_json.pop("attribute"))
+        # Handle version-specific formatting
+        if version == "v1-0":
+            # v1.0 keeps the original format with separate parameter/attribute sections
+            # and 'shape' field with .fcstd extension
+            pass
+        else:
+            # v1.1+ formats: Move all parameters into attributes
+            if "parameter" in tool_json and tool_json["parameter"]:
+                tool_json["attribute"].update(tool_json["parameter"])
+                tool_json["parameter"] = {}
 
-        # # Ensure an empty `attribute` section exists
-        # tool_json["attribute"] = tool_json.get("attribute", {})
+            # Convert shape to shape-type without .fcstd extension (capitalized)
+            if "shape" in tool_json:
+                tool_json["shape-type"] = get_shape_type(tool_json.pop("shape"))
+
+            # v1.2+ adds units field
+            if version == "v1-2":
+                # Get Units from tool data
+                units_index = columns.index("Units") if "Units" in columns else None
+                units = (
+                    tool[units_index]
+                    if units_index is not None and units_index < len(tool)
+                    else "Imperial"
+                )
+                tool_json["units"] = units if units else "Imperial"
 
         convert_string_to_int(tool_json)
 
@@ -364,7 +437,7 @@ def generate_json_files(tool_data, columns, output_directory):
 
         with open(output_file, "w") as json_file:
             json.dump(tool_json, json_file, indent=2, ensure_ascii=False)
-        print(f"Generated JSON file: {output_file}")
+        print(f"Generated {version} JSON file: {output_file}")
 
 
 def get_image_hash(file_path):
@@ -449,18 +522,22 @@ def generate_index_page_content():
     return "\n".join(bookmark_lines + output_lines)
 
 
-def generate_tools_json(output_path=None):
+def generate_tools_json(output_path=None, version="v1-0"):
     """
     Generate a JSON file containing tool numbers and paths to their .fctb files.
 
     Args:
         output_path (str, optional): Path to save the generated JSON file.
-                                     Defaults to the library file location in config.
+                                     Defaults to the library file location from config.
+        version (str): FreeCAD version ("v1-0", "v1-1", or "v1-2")
 
     Returns:
         None
     """
-    output_path = output_path or config["file_paths"]["library_file_location"]
+    # Determine output path based on version if not provided
+    if output_path is None:
+        paths = get_version_paths(version)
+        output_path = paths["library_path"]
 
     # Fetch tool numbers and names
     tools = fetch_tool_numbers_and_details()
@@ -477,7 +554,7 @@ def generate_tools_json(output_path=None):
     # Write to the output file
     with open(output_path, "w") as json_file:
         json.dump(tools_data, json_file, indent=2)
-    print(f"Tools JSON generated at {output_path}")
+    print(f"Generated library file {version}: {output_path}")
 
 
 def create_session(api_url, username, password):
@@ -951,7 +1028,9 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     api_url = config["wiki_settings"]["api_url"]
     username = config["wiki_credentials"]["username"]
     password = config["wiki_credentials"]["password"]
-    output_directory = config["file_paths"]["bits_file_location"]
+
+    # Get configured FreeCAD versions
+    versions = config["freecad"]["versions"]
 
     session = create_session(api_url, username, password)
 
@@ -968,13 +1047,17 @@ def main(return_session=False, tool_number=None, progress_callback=None):
 
     total_tools = len(tool_data)
     for idx, tool in enumerate(tool_data):
-        # Calculate and send progress
+        # Calculate and send progress (wiki publishing is 90%, file generation adds on top)
         if progress_callback:
-            percentage = int((idx + 1) / total_tools * 90)
+            percentage = int(
+                (idx + 1) / total_tools * 80
+            )  # Reserve 20% for other tasks
             progress_callback(percentage)
 
-        # Generate JSON files for tools
-        generate_json_files([tool], columns, output_directory)
+        # Generate JSON files for all configured FreeCAD versions
+        for version in versions:
+            paths = get_version_paths(version)
+            generate_json_files([tool], columns, paths["bits_dir"], version)
 
         # Publish tool to the wiki
         tool_number = tool["ToolNumber"]
@@ -1001,7 +1084,10 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     upload_wiki_page(
         session, api_url, config["wiki_settings"]["index_page"], index_page_content
     )
-    generate_tools_json()  # Generate consolidated JSON for the library
+
+    # Generate consolidated JSON library files for all configured versions
+    for version in versions:
+        generate_tools_json(version=version)
 
     # Update the manifest after publishing
     manifest_dir = config.get("manifest_settings", {}).get(
@@ -1011,9 +1097,10 @@ def main(return_session=False, tool_number=None, progress_callback=None):
         "manifest_file", "manifest.json"
     )
     manifest_path = os.path.join(manifest_dir, manifest_file)
-    source_dir = os.path.abspath(
-        os.path.join(output_directory, "../../")
-    )  # Adjust as needed
+
+    # Use base directory for manifest generation
+    base_dir = config["file_paths"]["base_directory"]
+    source_dir = os.path.abspath(base_dir)
 
     try:
         generate_manifest_main(source_dir, manifest_path)

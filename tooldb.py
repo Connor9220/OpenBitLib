@@ -241,6 +241,7 @@ class ToolDatabaseGUI(QMainWindow):
             "CuttingRadius": "Cutting Radius",
             "ShapeParameter": "ShapeParameter",
             "ShapeAttribute": "ShapeAttribute",
+            "Units": "Units",
         }
 
         # Define column names
@@ -414,6 +415,12 @@ class ToolDatabaseGUI(QMainWindow):
                 "width": 500,
                 "height": 70,
             },
+            "Units": {
+                "label": self.COLUMN_LABELS["Units"],
+                "widget": QComboBox(),
+                "column": "left",
+                "width": 150,
+            },
         }
 
         # Page 1: Basic Tool Info
@@ -549,6 +556,14 @@ class ToolDatabaseGUI(QMainWindow):
             self.tool_inputs["Shape"].addItems(shapes)
             # self.tool_inputs["Shape"].currentTextChanged.connect(self.update_table_with_non_direct_fields)
             self.tool_inputs["Shape"].currentTextChanged.connect(self.on_shape_changed)
+
+        # Populate the 'Units' combo box
+        if "Units" in self.tool_inputs and isinstance(
+            self.tool_inputs["Units"], QComboBox
+        ):
+            self.tool_inputs["Units"].clear()
+            self.tool_inputs["Units"].addItems(["Imperial", "Metric"])
+            self.tool_inputs["Units"].setCurrentText("Imperial")  # Default to Imperial
 
         self.stacked_widget.addWidget(self.page2)
 
