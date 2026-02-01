@@ -12,6 +12,7 @@ import re
 from settings import load_config
 from db_utils import *
 from generate_manifest import main as generate_manifest_main
+from fixtool import main as merge_tool_tables
 
 # Load the configuration
 config = load_config()
@@ -1124,6 +1125,13 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     except Exception as e:
         print(f"Failed to update manifest: {e}")
 
+    # Generate tool table and merge after publishing
+    try:
+        tool_table_data = generate_tool_table()
+        merge_tool_tables(update_data=tool_table_data)
+    except Exception as e:
+        print(f"Failed to generate or merge tool table: {e}")
+
     if progress_callback:
         progress_callback(100)
 
@@ -1131,6 +1139,63 @@ def main(return_session=False, tool_number=None, progress_callback=None):
 
     # except Exception as e:
     #     return {"status": "error", "message": str(e)}
+
+
+def generate_tool_table():
+    """
+    Generate tool table data from all tools in the database.
+
+    Format: T<num> P0 X0 Y0 Z0 A0 B0 C0 U<rpm> V0 W0 D<diameter> I0 J0 Q0 ;<name>
+    U value is calculated from ToolMaxRPM:
+      - If MaxRPM = -1, output U-1
+      - If MaxRPM != machine_max_rpm, output U<MaxRPM>
+      - Otherwise output U0
+
+    Returns:
+        list: List of formatted tool table lines
+    """
+    # Fetch all tools
+    tools, columns = fetch_tool_data()
+    
+    # Get machine max RPM from config
+    machine_max_rpm = config.get("machine_settings", {}).get("max_rpm", 24000)
+
+    lines = []
+    for tool in tools:
+        tool_number = tool.get("ToolNumber")
+        tool_name = tool.get("ToolName", "Unnamed Tool")
+
+        # Get diameter and convert to imperial if needed
+        diameter_str = tool.get("ToolDiameter", "0")
+        diameter = extract_numeric(diameter_str, field_type="dimension")
+        if diameter is None:
+            diameter = 0.0
+        
+        # Calculate U value from ToolMaxRPM
+        max_rpm = tool.get("ToolMaxRPM", 0)
+        # Remove commas and convert to int for comparison
+        try:
+            if isinstance(max_rpm, str):
+                max_rpm_value = int(max_rpm.replace(",", ""))
+            else:
+                max_rpm_value = int(max_rpm)
+        except (ValueError, TypeError):
+            max_rpm_value = 0
+        
+        # Determine U value based on MaxRPM
+        if max_rpm_value == -1:
+            u_value = "U-1"
+        elif max_rpm_value != machine_max_rpm and max_rpm_value != 0:
+            u_value = f"U{max_rpm_value}"
+        else:
+            u_value = "U0"
+
+        # Format the line
+        # T<num> P0 X0 Y0 Z0 A0 B0 C0 U<rpm> V0 W0 D<diameter> I0 J0 Q0 ;<name>
+        line = f"T{tool_number} P0 X0 Y0 Z0 A0 B0 C0 {u_value} V0 W0 D{diameter:.4f} I0 J0 Q0 ;{tool_name}"
+        lines.append(line)
+
+    return lines
 
 
 if __name__ == "__main__":

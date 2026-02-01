@@ -29,10 +29,8 @@ from gentoolwiki import (
     generate_index_page_content,
     upload_wiki_page,
     generate_tools_json,
-    generate_tool_table,
     map_column_names,
 )
-from fixtool import main as merge_tool_tables
 
 from db_utils import *
 
@@ -264,7 +262,6 @@ class ToolDatabaseGUI(QMainWindow):
         self.search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search tools by name or type...")
-        self.search_input.setClearButtonEnabled(True)  # Enable built-in clear button
         self.search_input.returnPressed.connect(self.search_tools)
         self.search_input.textChanged.connect(self.search_tools)
         self.search_button = QPushButton("Search")
@@ -1580,21 +1577,10 @@ class ToolDatabaseGUI(QMainWindow):
             QApplication.processEvents()
 
             if result["status"] == "success":
-                # Generate tool table and merge after successful publishing
-                try:
-                    tool_table_data = generate_tool_table()
-                    merge_tool_tables(update_data=tool_table_data)
-                except Exception as e:
-                    QMessageBox.warning(
-                        self,
-                        "Tool Table Warning",
-                        f"Tools published successfully, but failed to generate or merge tool table: {str(e)}",
-                    )
-
                 QMessageBox.information(
                     self,
                     "Success",
-                    "All tools have been successfully published to the wiki and tool table generated!",
+                    "All tools have been successfully published to the wiki!",
                 )
             else:
                 QMessageBox.warning(

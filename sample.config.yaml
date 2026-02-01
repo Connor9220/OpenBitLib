@@ -17,10 +17,14 @@ file_paths:
   qr_images_location: "qrImages"
   bit_images: "BitImages"
   database_path: "tools.db"
+  master_tool_table: "tool.tbl"
 
 freecad:
   versions: ["v1-0", "v1-1", "v1-2"]
   library_name: "Default.fctl"
+
+machine_settings:
+  max_rpm: 24000
 
 tool_settings:
   default_shape: "endmill.fcstd"
