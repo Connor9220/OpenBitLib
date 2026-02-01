@@ -7,6 +7,7 @@ from db_utils import (
     fetch_filtered,
     fetch_image_hash,
     fetch_shapes,
+    fetch_shapes_by_type,
     fetch_tool_data,
     fetch_tool_numbers_and_details,
     fetch_unique_column_values,
@@ -199,18 +200,22 @@ async def api_fetch_image_hash(tool_id: int):
 
 
 @app.get("/shapes")
-async def api_fetch_shapes(shape_name: Optional[str] = None):
+async def api_fetch_shapes(shape_name: Optional[str] = None, shape_type: Optional[str] = None):
     """
     API endpoint to fetch shapes or specific shape details.
 
     Args:
         shape_name (Optional[str]): The name of the shape to fetch. If None, fetches all shapes.
+        shape_type (Optional[str]): The type of the shape to fetch by type instead of name.
 
     Returns:
         dict: A dictionary containing the list of shapes or specific shape details.
     """
     try:
-        result = fetch_shapes(shape_name=shape_name)
+        if shape_type:
+            result = fetch_shapes_by_type(shape_type=shape_type)
+        else:
+            result = fetch_shapes(shape_name=shape_name)
         return {"shapes": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

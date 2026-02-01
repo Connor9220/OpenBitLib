@@ -199,6 +199,7 @@ class ToolDatabaseGUI(QMainWindow):
                 "Flutes": "number",
                 "Stickout": "dimension",
                 "CuttingRadius": "dimension",
+                "CornerRadius": "dimension",
             },
         )
 
@@ -242,6 +243,7 @@ class ToolDatabaseGUI(QMainWindow):
             "ShapeParameter": "ShapeParameter",
             "ShapeAttribute": "ShapeAttribute",
             "Units": "Units",
+            "CornerRadius": "Corner Radius",
         }
 
         # Define column names
@@ -830,10 +832,10 @@ class ToolDatabaseGUI(QMainWindow):
             tool_row (int): The selected row index in the `table` widget.
         """
 
-        selected_shape = self.tool_inputs["Shape"].currentText()
+        selected_shape_type = self.tool_inputs["Shape"].currentText()
 
-        # Fetch shape data
-        shape_data = fetch_shapes(selected_shape)
+        # Fetch shape data by shape_type
+        shape_data = fetch_shapes_by_type(selected_shape_type)
         if not shape_data:
             self.tableWidget.clearContents()
             self.tableWidget.setRowCount(0)
@@ -1030,9 +1032,9 @@ class ToolDatabaseGUI(QMainWindow):
                     r"[^\d.]", "", value
                 )  # Remove all non-digit and non-decimal characters
                 if number:  # Ensure there is something to convert
-                    return f"{float(number):.{angle_precision}f} °"  # Apply precision
+                    return f"{float(number):.{angle_precision}f}°"  # Apply precision
                 else:
-                    return f"{float(0):.{angle_precision}f} °"  # Apply precision
+                    return f"{float(0):.{angle_precision}f}°"  # Apply precision
 
             elif field_type == "rpm":
                 # Format RPM fields
@@ -1303,14 +1305,14 @@ class ToolDatabaseGUI(QMainWindow):
         shape_attributes = {}
 
         # Step 1: Fetch shape data once
-        shape_name = self.tool_inputs["Shape"].currentText()
-        shape_data = fetch_shapes(shape_name)
+        shape_type = self.tool_inputs["Shape"].currentText()
+        shape_data = fetch_shapes_by_type(shape_type)
 
         if shape_data:
             shape_parameters_list = json.loads(shape_data.ShapeParameter or "[]")
             shape_attributes_list = json.loads(shape_data.ShapeAttribute or "[]")
         else:
-            print(f"Error: Shape data not found for shape: {shape_name}")
+            print(f"Error: Shape data not found for shape type: {shape_type}")
             shape_parameters_list = []
             shape_attributes_list = []
 

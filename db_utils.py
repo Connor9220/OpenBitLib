@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, ForeignKey, cast
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy import text, select
 from settings import load_config
@@ -315,6 +315,9 @@ def fetch_filtered(keyword):
             Tool.ToolName.like(keyword)
             | Tool.ToolType.like(keyword)
             | Tool.ManufacturerName.like(keyword)
+            | cast(Tool.ToolNumber, String).like(keyword)
+            | Tool.Shape.like(keyword)
+            | Tool.PartNumber.like(keyword)
         )
         tools = session.execute(query).scalars().all()
 
@@ -365,14 +368,13 @@ def fetch_shapes(shape_name=None):
         if shape_name:
             endpoint += f"?shape_name={shape_name}"
         response = make_api_request("GET", endpoint)
+        # API returns the shape data directly in "shapes" key
+        result = response["shapes"]
 
-        if shape_name:
-            # Convert the API response into an object-like structure to mimic SQLAlchemy row behavior
-            shape_data = response["shapes"]
-            return type("ShapeRow", (object,), shape_data)()
-        else:
-            result = response["shapes"]
-            return result
+        # Convert dict to object with attribute access for single shape lookup
+        if shape_name and isinstance(result, dict):
+            return type("ShapeRow", (object,), result)()
+        return result
 
     # SQL mode remains unchanged
     try:
@@ -385,14 +387,54 @@ def fetch_shapes(shape_name=None):
                 ).fetchone()
                 return result  # Return the row as-is
             else:
-                # Fetch all shape names
+                # Fetch all shape types for dropdown
                 shapes = session.execute(
-                    text("SELECT ShapeName FROM FCShapes ORDER BY ShapeName")
+                    text("SELECT shape_type FROM FCShapes ORDER BY shape_type")
                 ).fetchall()
-                return [row[0] for row in shapes]  # Extract just the ShapeName column
+                return [row[0] for row in shapes]  # Extract just the shape_type column
     except Exception as e:
         print(f"Error fetching shapes: {e}")
         return None if shape_name else []
+
+
+def fetch_shapes_by_type(shape_type=None):
+    """
+    Fetch shape data by shape_type instead of ShapeName.
+
+    Args:
+        shape_type (str): The shape_type to look up
+
+    Returns:
+        Row object with shape data, or None if not found
+    """
+    if DB_MODE == "api":
+        endpoint = f"/shapes"
+        if shape_type:
+            endpoint += f"?shape_type={shape_type}"
+        response = make_api_request("GET", endpoint)
+        # API returns the shape data directly in "shapes" key
+        result = response["shapes"]
+
+        # Convert dict to object with attribute access for single shape lookup
+        if shape_type and isinstance(result, dict):
+            return type("ShapeRow", (object,), result)()
+        return result
+
+    # SQL mode
+    try:
+        with Session() as session:
+            if shape_type:
+                # Fetch the specific shape's row by shape_type
+                result = session.execute(
+                    text("SELECT * FROM FCShapes WHERE shape_type = :shape_type"),
+                    {"shape_type": shape_type},
+                ).fetchone()
+                return result  # Return the row as-is
+            else:
+                return None
+    except Exception as e:
+        print(f"Error fetching shapes by type: {e}")
+        return None
 
 
 def fetch_unique_column_values(column_name):
@@ -457,9 +499,9 @@ def insert(tool_data):
         tool_max_rpm_int = int(
             extract_numeric(tool_data.get("ToolMaxRPM"), field_type="rpm") or 0
         )
-        filtered_tool_data[
-            "ToolMaxRPM"
-        ] = tool_max_rpm_int  # Add processed integer value for ToolMaxRPM
+        filtered_tool_data["ToolMaxRPM"] = (
+            tool_max_rpm_int  # Add processed integer value for ToolMaxRPM
+        )
 
         # Insert into the main Tool table
         tool = Tool(**filtered_tool_data)

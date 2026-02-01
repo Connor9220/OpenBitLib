@@ -229,7 +229,7 @@ def convert_to_original_unit(value, unit):
         return f"{value:.4f} {unit}"  # Default for unknown units
 
 
-def map_tool_to_json(tool, columns):
+def map_tool_to_json(tool, columns, version="v1-0"):
     """
     Map tool data from the database to a JSON structure.
 
@@ -239,6 +239,7 @@ def map_tool_to_json(tool, columns):
     Args:
         tool (dict): A dictionary representing the tool data from the database.
         columns (list): A list of column names corresponding to the tool data.
+        version (str): FreeCAD version format (v1-0, v1-1, v1-2, etc.).
 
     Returns:
         dict: A dictionary in JSON format representing the tool.
@@ -246,10 +247,26 @@ def map_tool_to_json(tool, columns):
     # Use tool directly as a dictionary
     tool_data_dict = tool
 
-    # Extract shape name
-    shape_name = tool_data_dict.get("Shape", "unknown")
+    # Extract shape_type from Tools.Shape field
+    shape_type = tool_data_dict.get("Shape", "unknown")
 
-    # Prepare JSON structure
+    # Look up the ShapeName (filename) from FCShapes using shape_type
+    shape_data = fetch_shapes_by_type(shape_type)
+    if not shape_data:
+        print(f"Shape type '{shape_type}' not found in FCShapes.")
+        json_data = {
+            "version": 2,
+            "name": tool_data_dict.get("ToolName", "Unnamed Tool"),
+            "shape": shape_type,
+            "parameter": {"Shape": shape_type},
+            "attribute": {},
+        }
+        return json_data
+
+    # Get the filename from ShapeName field
+    shape_name = shape_data.ShapeName
+
+    # Prepare JSON structure with shape_name as the filename
     json_data = {
         "version": 2,
         "name": tool_data_dict.get("ToolName", "Unnamed Tool"),
@@ -257,14 +274,6 @@ def map_tool_to_json(tool, columns):
         "parameter": {},
         "attribute": {},
     }
-
-    # Fetch shape parameters and attributes using fetch_shapes
-    shape_data = fetch_shapes(shape_name)
-    if not shape_data:
-        print(f"Shape '{shape_name}' not found in FCShapes.")
-        json_data["parameter"] = {"Shape": shape_name}  # Fallback parameter
-        json_data["attribute"] = {}
-        return json_data
 
     # Parse ShapeParameter and ShapeAttribute from the database
     shape_parameters_list = json.loads(shape_data.ShapeParameter or "[]")
@@ -279,35 +288,40 @@ def map_tool_to_json(tool, columns):
     )
 
     # Special case: Handle bullnose.fcstd shape
-    if shape_name == "bullnose.fcstd":
+    if shape_name == "bullnose.fcstd" and version == "v1-0":
+        # v1.0: Calculate FlatRadius from CornerRadius
         try:
             # Extract numeric values and units
             diameter, diameter_unit = extract_numeric_value_with_unit(
                 tool_data_dict.get("ToolDiameter", "0")
             )
-            nose_radius_value = shape_parameters_values.get("NoseRadius", "0")
-            nose_radius, nose_radius_unit = extract_numeric_value_with_unit(
-                nose_radius_value
+            corner_radius_value = shape_parameters_values.get("CornerRadius", "0")
+            corner_radius, corner_radius_unit = extract_numeric_value_with_unit(
+                corner_radius_value
             )
 
             # Ensure both units are consistent
-            if diameter_unit != nose_radius_unit:
+            if diameter_unit != corner_radius_unit:
                 raise ValueError(
-                    f"Unit mismatch: {diameter_unit} vs {nose_radius_unit}"
+                    f"Unit mismatch: {diameter_unit} vs {corner_radius_unit}"
                 )
 
             # Calculate FlatRadius
-            flat_radius = (diameter / 2) - nose_radius
+            flat_radius = (diameter / 2) - corner_radius
             json_data["parameter"]["FlatRadius"] = convert_to_original_unit(
                 flat_radius, diameter_unit
             )
         except (ValueError, TypeError) as e:
             print(f"Invalid data for calculating FlatRadius: {e}")
 
-    # Populate parameters: Iterate through the list and exclude NoseRadius if present
+    # Populate parameters: Iterate through the list
     for param in shape_parameters_list:
-        if param == "NoseRadius" and shape_name == "bullnose.fcstd":
-            # Skip NoseRadius for bullnose.fcstd
+        if (
+            param == "CornerRadius"
+            and shape_name == "bullnose.fcstd"
+            and version == "v1-0"
+        ):
+            # Skip CornerRadius for v1.0 bullnose (we use calculated FlatRadius instead)
             continue
 
         db_param = map_column_names(
@@ -390,7 +404,8 @@ def generate_json_files(tool_data, columns, output_directory, version="v1-0"):
 
     Version differences:
         - v1-0: Separate 'parameter' and 'attribute' sections, 'shape' field with .fcstd extension
-        - v1-1: All in 'attribute' section, 'shape-type' field without .fcstd extension (capitalized)
+        - v1-1: All in 'parameter' section, 'shape-type' field without .fcstd extension (capitalized),
+                adds 'id' field (filename without extension), removes SpindlePower
         - v1-2: Same as v1-1 but adds 'units' field at root level (Imperial or Metric)
 
     Returns:
@@ -401,42 +416,43 @@ def generate_json_files(tool_data, columns, output_directory, version="v1-0"):
 
     # Process each tool
     for tool in tool_data:
-        tool_json = map_tool_to_json(tool, columns)
+        tool_json = map_tool_to_json(tool, columns, version)
 
         # Handle version-specific formatting
         if version == "v1-0":
             # v1.0 keeps the original format with separate parameter/attribute sections
             # and 'shape' field with .fcstd extension
-            pass
+            # Special handling: translate 'radius.fcstd' to 'roundover.fcstd' for v1.0
+            if tool_json.get("shape") == "radius.fcstd":
+                tool_json["shape"] = "roundover.fcstd"
         else:
-            # v1.1+ formats: Move all parameters into attributes
-            if "parameter" in tool_json and tool_json["parameter"]:
-                tool_json["attribute"].update(tool_json["parameter"])
-                tool_json["parameter"] = {}
+            # v1.1+ formats: Move all attributes into parameters
+            if "attribute" in tool_json and tool_json["attribute"]:
+                tool_json["parameter"].update(tool_json["attribute"])
+                tool_json["attribute"] = {}
 
-            # Convert shape to shape-type without .fcstd extension (capitalized)
+            # Use shape_type from database for v1.1+
             if "shape" in tool_json:
-                tool_json["shape-type"] = get_shape_type(tool_json.pop("shape"))
+                tool_json["shape-type"] = tool.get("Shape", "unknown")
 
-            # v1.2+ adds units field
+            # v1.2+ adds units field in parameter section
             if version == "v1-2":
-                # Get Units from tool data
-                units_index = columns.index("Units") if "Units" in columns else None
-                units = (
-                    tool[units_index]
-                    if units_index is not None and units_index < len(tool)
-                    else "Imperial"
-                )
-                tool_json["units"] = units if units else "Imperial"
+                units = tool.get("Units") if "Units" in columns else None
+                tool_json["parameter"]["Units"] = units if units else "Imperial"
 
         convert_string_to_int(tool_json)
 
         tool_name = tool_json["name"]
         sanitized_tool_name = sanitize_filename(tool_name)
+
+        if version != "v1-0":
+            tool_json["id"] = sanitized_tool_name
+
         output_file = os.path.join(output_directory, f"{sanitized_tool_name}.fctb")
 
-        with open(output_file, "w") as json_file:
-            json.dump(tool_json, json_file, indent=2, ensure_ascii=False)
+        with open(output_file, "w", encoding="utf-8") as json_file:
+            json.dump(tool_json, json_file, sort_keys=True, indent=2)
+            json_file.write("\n")
         print(f"Generated {version} JSON file: {output_file}")
 
 
@@ -869,7 +885,7 @@ def generate_wiki_page(tool_data):
 | '''Shank Size''' || [ToolShankSize]
 |-
 | '''Diameter''' || [ToolDiameter]
-[INSERT_NOSERADIUS][INSERT_CUTTINGRADIUS][INSERT_TAPERANGLE][INSERT_TAPERDIAMETER]|-
+[INSERT_CORNERRADIUS][INSERT_CUTTINGRADIUS][INSERT_TAPERANGLE][INSERT_TAPERDIAMETER]|-
 | '''Flutes (FL)''' || [Flutes]
 |-
 | '''Overall Length (OAL)''' || [OAL]
@@ -905,15 +921,15 @@ def generate_wiki_page(tool_data):
     # Parse ShapeParameter from tool_data
     shape_parameters = json.loads(tool_data.get("ShapeParameter", "{}") or "{}")
 
-    # Add NoseRadius if present and format it
-    nose_radius = shape_parameters.get("NoseRadius")
-    if nose_radius:
-        formatted_nose_radius = format_measurement(
-            nose_radius, convert_to_fraction=True, add_quotes=True
+    # Add CornerRadius if present and format it
+    corner_radius = shape_parameters.get("CornerRadius")
+    if corner_radius:
+        formatted_corner_radius = format_measurement(
+            corner_radius, convert_to_fraction=True, add_quotes=True
         )
-        nose_radius_row = f"|-\n| '''Nose Radius''' || {formatted_nose_radius}\n"
+        corner_radius_row = f"|-\n| '''Corner Radius''' || {formatted_corner_radius}\n"
     else:
-        nose_radius_row = ""
+        corner_radius_row = ""
 
     # Add CuttingRadius if present and format it
     cutting_radius = shape_parameters.get("CuttingRadius")
@@ -975,7 +991,7 @@ def generate_wiki_page(tool_data):
     page_content = template
 
     # Replace placeholders in the template
-    page_content = page_content.replace("[INSERT_NOSERADIUS]", nose_radius_row)
+    page_content = page_content.replace("[INSERT_CORNERRADIUS]", corner_radius_row)
     page_content = page_content.replace("[INSERT_CUTTINGRADIUS]", cutting_radius_row)
     page_content = page_content.replace("[INSERT_TAPERANGLE]", taper_angle_row)
     page_content = page_content.replace("[INSERT_TAPERDIAMETER]", taper_diameter_row)
