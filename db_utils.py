@@ -1,4 +1,13 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, ForeignKey, cast
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Float,
+    Text,
+    ForeignKey,
+    cast,
+)
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 from sqlalchemy import text, select
 from settings import load_config
@@ -20,7 +29,8 @@ class Tool(Base):
     ToolNumber = Column(Integer, primary_key=True, autoincrement=True)
     ToolName = Column(Text)
     ToolType = Column(Text)
-    Shape = Column(Text)
+    Shape = Column(Text)  # Always the parent shape type (e.g., "Endmill")
+    SubClass = Column(Text)  # Subtype name if set (e.g., "upcut"), else NULL
     ToolShankSize = Column(Text)
     Flutes = Column(Text)
     OAL = Column(Text)
@@ -90,6 +100,34 @@ class ToolTable(Base):
 
     def __repr__(self):
         return f"<ToolTable(id={self.id}, name={self.name})>"
+
+
+class ShapeSubtypes(Base):
+    __tablename__ = "ShapeSubtypes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    shape_type = Column(String(255), nullable=False)
+    subtype_name = Column(String(255), nullable=False)
+    description = Column(Text)
+
+    def __repr__(self):
+        return f"<ShapeSubtypes(id={self.id}, shape_type={self.shape_type}, subtype_name={self.subtype_name})>"
+
+
+def format_subtype_display_name(subtype_name):
+    """
+    Convert subtype_name to display name format.
+    Replaces underscores with spaces and title cases.
+
+    Args:
+        subtype_name (str): Subtype name (e.g., 'center_cut', 'upcut')
+
+    Returns:
+        str: Display name (e.g., 'Center Cut', 'Upcut')
+    """
+    if not subtype_name:
+        return ""
+    return subtype_name.replace("_", " ").title()
 
 
 # Dynamically construct the database URL
@@ -362,17 +400,86 @@ class ShapeData:
         self.ShapeAttribute = shape_attribute
 
 
+def fetch_startup_shape_data():
+    """
+    Fetch everything needed at startup for shape caches in a SINGLE query.
+    Returns (shapes_with_subtypes, shape_cache) where:
+      - shapes_with_subtypes: {shape_type: [{subtype_name, display_name}, ...]}
+      - shape_cache:          {shape_type: ShapeData}
+    Replaces the previous two-call pattern (fetch_shapes_with_subtypes + shape cache) with a single query.
+    """
+    if DB_MODE == "api":
+        response = make_api_request("GET", "/startup_shape_data")
+        data = response.get("startup_shape_data", {})
+        shapes_with_subtypes = data.get("shapes_with_subtypes", {})
+        shape_cache = {
+            shape_type: ShapeData(
+                shape_name=d.get("ShapeName", shape_type),
+                shape_parameter=d.get("ShapeParameter"),
+                shape_attribute=d.get("ShapeAttribute"),
+            )
+            for shape_type, d in data.get("shape_cache", {}).items()
+        }
+        return shapes_with_subtypes, shape_cache
+
+    # SQL mode — single JOIN covers both FCShapes columns and ShapeSubtypes rows
+    try:
+        with Session() as session:
+            rows = session.execute(
+                text(
+                    "SELECT f.shape_type, f.ShapeName, f.ShapeParameter, f.ShapeAttribute, s.subtype_name"
+                    " FROM FCShapes f"
+                    " LEFT JOIN ShapeSubtypes s ON s.shape_type = f.shape_type"
+                    " ORDER BY f.shape_type, s.subtype_name"
+                )
+            ).fetchall()
+
+            shapes_with_subtypes = {}
+            shape_cache = {}
+            for (
+                shape_type,
+                shape_file_name,
+                shape_param,
+                shape_attr,
+                subtype_name,
+            ) in rows:
+                if shape_type not in shapes_with_subtypes:
+                    shapes_with_subtypes[shape_type] = []
+                    shape_cache[shape_type] = ShapeData(
+                        shape_name=shape_file_name,
+                        shape_parameter=shape_param,
+                        shape_attribute=shape_attr,
+                    )
+                if subtype_name is not None:
+                    shapes_with_subtypes[shape_type].append(
+                        {
+                            "subtype_name": subtype_name,
+                            "display_name": format_subtype_display_name(subtype_name),
+                        }
+                    )
+
+            return shapes_with_subtypes, shape_cache
+    except Exception as e:
+        print(f"Error fetching startup shape data: {e}")
+        return {}, {}
+
+
 def fetch_shapes(shape_name=None):
     if DB_MODE == "api":
-        endpoint = f"/shapes"
-        if shape_name:
-            endpoint += f"?shape_name={shape_name}"
+        if not shape_name:
+            # Fetch all shape types for dropdown
+            endpoint = "/shapes"
+            response = make_api_request("GET", endpoint)
+            return response["shapes"]  # Return list as-is
+
+        # Fetch specific shape by name
+        endpoint = f"/shapes?shape_name={shape_name}"
         response = make_api_request("GET", endpoint)
         # API returns the shape data directly in "shapes" key
         result = response["shapes"]
 
         # Convert dict to object with attribute access for single shape lookup
-        if shape_name and isinstance(result, dict):
+        if isinstance(result, dict):
             return type("ShapeRow", (object,), result)()
         return result
 
@@ -408,9 +515,9 @@ def fetch_shapes_by_type(shape_type=None):
         Row object with shape data, or None if not found
     """
     if DB_MODE == "api":
-        endpoint = f"/shapes"
-        if shape_type:
-            endpoint += f"?shape_type={shape_type}"
+        if not shape_type:
+            return None
+        endpoint = f"/shapes?shape_type={shape_type}"
         response = make_api_request("GET", endpoint)
         # API returns the shape data directly in "shapes" key
         result = response["shapes"]
@@ -435,6 +542,240 @@ def fetch_shapes_by_type(shape_type=None):
     except Exception as e:
         print(f"Error fetching shapes by type: {e}")
         return None
+
+
+def fetch_shape_subtypes(shape_type=None):
+    """
+    Fetch subtypes for a given shape type.
+
+    Args:
+        shape_type (str, optional): The shape_type to fetch subtypes for.
+                                    If None, returns all subtypes grouped by shape_type.
+
+    Returns:
+        List of dicts with subtype information, or empty list if none found.
+    """
+    if DB_MODE == "api":
+        endpoint = f"/shape_subtypes"
+        if shape_type:
+            endpoint += f"?shape_type={shape_type}"
+        response = make_api_request("GET", endpoint)
+        return response.get("subtypes", [])
+
+    # SQL mode
+    try:
+        with Session() as session:
+            if shape_type:
+                # Fetch subtypes for a specific shape
+                results = session.execute(
+                    text(
+                        "SELECT subtype_name FROM ShapeSubtypes WHERE shape_type = :shape_type ORDER BY subtype_name"
+                    ),
+                    {"shape_type": shape_type},
+                ).fetchall()
+                return [
+                    {
+                        "subtype_name": row[0],
+                        "display_name": format_subtype_display_name(row[0]),
+                    }
+                    for row in results
+                ]
+            else:
+                # Fetch all subtypes
+                results = session.execute(
+                    text(
+                        "SELECT shape_type, subtype_name FROM ShapeSubtypes ORDER BY shape_type, subtype_name"
+                    )
+                ).fetchall()
+                return [
+                    {
+                        "shape_type": row[0],
+                        "subtype_name": row[1],
+                        "display_name": format_subtype_display_name(row[1]),
+                    }
+                    for row in results
+                ]
+    except Exception as e:
+        print(f"Error fetching shape subtypes: {e}")
+        return []
+
+
+def fetch_shapes_with_subtypes():
+    """
+    Fetch all shapes and their subtypes in a hierarchical structure.
+
+    Returns:
+        Dict mapping shape_type to list of subtypes:
+        {
+            "Endmill": [{"subtype_name": "upcut", "display_name": "Upcut"}, ...],
+            "Drill": [{"subtype_name": "jobber", "display_name": "Jobber"}, ...],
+            ...
+        }
+    """
+    if DB_MODE == "api":
+        endpoint = f"/shapes_with_subtypes"
+        response = make_api_request("GET", endpoint)
+        return response.get("shapes_with_subtypes", {})
+
+    # SQL mode - single JOIN query instead of N+1
+    try:
+        with Session() as session:
+            rows = session.execute(
+                text(
+                    "SELECT f.shape_type, s.subtype_name"
+                    " FROM FCShapes f"
+                    " LEFT JOIN ShapeSubtypes s ON s.shape_type = f.shape_type"
+                    " ORDER BY f.shape_type, s.subtype_name"
+                )
+            ).fetchall()
+
+            result = {}
+            for shape_type, subtype_name in rows:
+                if shape_type not in result:
+                    result[shape_type] = []
+                if subtype_name is not None:
+                    result[shape_type].append(
+                        {
+                            "subtype_name": subtype_name,
+                            "display_name": format_subtype_display_name(subtype_name),
+                        }
+                    )
+
+            return result
+    except Exception as e:
+        print(f"Error fetching shapes with subtypes: {e}")
+        return {}
+
+
+def build_subtype_lookup(shapes_with_subtypes=None):
+    """
+    Build a fast lookup dictionary for subtype resolution.
+    Returns a dict mapping subtype_name (lowercase) to {"parent_shape": str, "subtype": str, "display_name": str}
+
+    Args:
+        shapes_with_subtypes (dict, optional): Pre-fetched data from fetch_shapes_with_subtypes().
+            If provided, no additional API/DB call is made. Pass this when you already
+            have the data (e.g. during app init) to avoid a redundant round-trip.
+
+    This is used to avoid repeated database/API calls when formatting multiple shape values.
+    """
+    lookup = {}
+
+    if shapes_with_subtypes is None:
+        if DB_MODE == "api":
+            endpoint = f"/shapes_with_subtypes"
+            response = make_api_request("GET", endpoint)
+            shapes_with_subtypes = response.get("shapes_with_subtypes", {})
+        else:
+            shapes_with_subtypes = fetch_shapes_with_subtypes()
+
+    # Build the lookup dictionary
+    for parent_shape, subtypes in shapes_with_subtypes.items():
+        for subtype_info in subtypes:
+            subtype_name = subtype_info["subtype_name"]
+            display_name = subtype_info["display_name"]
+            # Store by lowercase for case-insensitive lookup
+            lookup[subtype_name.lower()] = {
+                "parent_shape": parent_shape,
+                "subtype": subtype_name,
+                "display_name": display_name,
+            }
+
+    return lookup
+
+
+def resolve_shape_info(shape_value, subtype_lookup=None):
+    """
+    Resolve shape information from a Shape column value.
+    The Shape column can contain either a parent shape (e.g., "Endmill") or a subtype (e.g., "upcut").
+    Handles both raw database format ("upcut", "long_reach") and formatted display ("Upcut", "Long Reach").
+    Also handles combined format "Endmill - Upcut" from table display.
+
+    Args:
+        shape_value (str): Value from the Shape column
+        subtype_lookup (dict, optional): Pre-built lookup dictionary from build_subtype_lookup()
+                                         Used for batch operations to avoid repeated DB/API calls
+
+    Returns:
+        dict: {
+            "parent_shape": str,    # The parent shape type (e.g., "Endmill")
+            "subtype": str or None, # The subtype name if this is a subtype (e.g., "upcut")
+            "is_subtype": bool      # True if this is a subtype
+        }
+    """
+    if not shape_value:
+        return {"parent_shape": None, "subtype": None, "is_subtype": False}
+
+    # Check if value is in "Parent - Subtype" format (from table display)
+    if " - " in shape_value:
+        parts = shape_value.split(" - ", 1)
+        if len(parts) == 2:
+            parent_shape = parts[0].strip()
+            subtype_display = parts[1].strip()
+            # Normalize the subtype part: "Long Reach" -> "long_reach"
+            subtype_normalized = subtype_display.lower().replace(" ", "_")
+            return {
+                "parent_shape": parent_shape,
+                "subtype": subtype_normalized,
+                "is_subtype": True,
+            }
+
+    # Normalize the input: lowercase and replace spaces with underscores
+    # This handles both "Upcut"/"upcut" and "Long Reach"/"long_reach"
+    normalized_value = shape_value.lower().replace(" ", "_")
+
+    # If we have a lookup cache, use it (fast path for batch operations)
+    if subtype_lookup is not None:
+        if normalized_value in subtype_lookup:
+            info = subtype_lookup[normalized_value]
+            return {
+                "parent_shape": info["parent_shape"],
+                "subtype": info["subtype"],
+                "is_subtype": True,
+            }
+        else:
+            # Not in lookup, assume it's a parent shape
+            return {
+                "parent_shape": shape_value,
+                "subtype": None,
+                "is_subtype": False,
+            }
+
+    # No lookup cache - do normal resolution (slower, for single operations)
+    if DB_MODE == "api":
+        endpoint = f"/resolve_shape?shape_value={shape_value}"
+        response = make_api_request("GET", endpoint)
+        return response.get("shape_info", {})
+
+    # SQL mode - check if the shape_value is a subtype
+    try:
+        with Session() as session:
+            # Try to find this value as a subtype (case-insensitive)
+            result = session.execute(
+                text(
+                    "SELECT shape_type, subtype_name FROM ShapeSubtypes WHERE LOWER(subtype_name) = :subtype_name LIMIT 1"
+                ),
+                {"subtype_name": normalized_value},
+            ).fetchone()
+
+            if result:
+                # It's a subtype - return parent shape and the actual database subtype name
+                return {
+                    "parent_shape": result[0],
+                    "subtype": result[1],  # Use the actual database value
+                    "is_subtype": True,
+                }
+            else:
+                # It's a parent shape - return as-is
+                return {
+                    "parent_shape": shape_value,
+                    "subtype": None,
+                    "is_subtype": False,
+                }
+    except Exception as e:
+        print(f"Error resolving shape info: {e}")
+        # Assume it's a parent shape on error
+        return {"parent_shape": shape_value, "subtype": None, "is_subtype": False}
 
 
 def fetch_unique_column_values(column_name):

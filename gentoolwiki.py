@@ -13,6 +13,7 @@ from settings import load_config
 from db_utils import *
 from generate_manifest import main as generate_manifest_main
 from fixtool import main as merge_tool_tables
+from db_utils import resolve_shape_info
 
 # Load the configuration
 config = load_config()
@@ -107,7 +108,9 @@ def get_version_paths(version):
     return {"bits_dir": bits_dir, "library_path": library_path}
 
 
-def format_measurement(value, convert_to_fraction=False, add_quotes=False):
+def format_measurement(
+    value, convert_to_fraction=False, add_quotes=False, strip_trailing_zeros=False
+):
     """
     Format measurements for consistent wiki output:
 
@@ -119,7 +122,7 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
         value (str): The measurement value to format (e.g., "5in", "12.7mm").
         convert_to_fraction (bool): Whether to convert inches to fractional format.
         add_quotes (bool): Whether to append quotes for inch values.
-
+        strip_trailing_zeros (bool): Whether to strip trailing zeros for metric values.
     Returns:
         str: The formatted measurement, or "N/A" for invalid input.
     """
@@ -171,8 +174,12 @@ def format_measurement(value, convert_to_fraction=False, add_quotes=False):
                 return f"{formatted_value} in"
 
         elif unit == "mm":
-            # Keep metric values untouched
-            return value
+            if strip_trailing_zeros:
+                # Remove trailing zeros and possible space for mm values
+                formatted_value = f"{num:.10f}".rstrip("0").rstrip(".")
+                return f"{formatted_value} mm"
+            else:
+                return value
 
         else:
             # Return unprocessed for unknown or unsupported units
@@ -230,7 +237,9 @@ def convert_to_original_unit(value, unit):
         return f"{value:.4f} {unit}"  # Default for unknown units
 
 
-def map_tool_to_json(tool, columns, version="v1-0"):
+def map_tool_to_json(
+    tool, columns, version="v1-0", subtype_lookup=None, shape_cache=None
+):
     """
     Map tool data from the database to a JSON structure.
 
@@ -248,18 +257,23 @@ def map_tool_to_json(tool, columns, version="v1-0"):
     # Use tool directly as a dictionary
     tool_data_dict = tool
 
-    # Extract shape_type from Tools.Shape field
-    shape_type = tool_data_dict.get("Shape", "unknown")
+    # Extract parent shape and subclass (subtype) directly from their own fields
+    parent_shape = tool_data_dict.get("Shape", "unknown")
+    subtype = tool_data_dict.get("SubClass") or None
 
-    # Look up the ShapeName (filename) from FCShapes using shape_type
-    shape_data = fetch_shapes_by_type(shape_type)
+    # Look up the ShapeName (filename) from FCShapes using cache or API
+    shape_data = (
+        shape_cache.get(parent_shape)
+        if shape_cache
+        else fetch_shapes_by_type(parent_shape)
+    )
     if not shape_data:
-        print(f"Shape type '{shape_type}' not found in FCShapes.")
+        print(f"Shape type '{parent_shape}' not found in FCShapes.")
         json_data = {
             "version": 2,
             "name": tool_data_dict.get("ToolName", "Unnamed Tool"),
-            "shape": shape_type,
-            "parameter": {"Shape": shape_type},
+            "shape": parent_shape,
+            "parameter": {"Shape": parent_shape},
             "attribute": {},
         }
         return json_data
@@ -393,7 +407,14 @@ def convert_string_to_int(obj):
                     obj[i] = int(item)
 
 
-def generate_json_files(tool_data, columns, output_directory, version="v1-0"):
+def generate_json_files(
+    tool_data,
+    columns,
+    output_directory,
+    version="v1-0",
+    subtype_lookup=None,
+    shape_cache=None,
+):
     """
     Generate JSON files for tools in specified FreeCAD version format.
 
@@ -417,7 +438,13 @@ def generate_json_files(tool_data, columns, output_directory, version="v1-0"):
 
     # Process each tool
     for tool in tool_data:
-        tool_json = map_tool_to_json(tool, columns, version)
+        tool_json = map_tool_to_json(
+            tool,
+            columns,
+            version,
+            subtype_lookup=subtype_lookup,
+            shape_cache=shape_cache,
+        )
 
         # Handle version-specific formatting
         if version == "v1-0":
@@ -432,9 +459,17 @@ def generate_json_files(tool_data, columns, output_directory, version="v1-0"):
                 tool_json["parameter"].update(tool_json["attribute"])
                 tool_json["attribute"] = {}
 
-            # Use shape_type from database for v1.1+
+            # Handle shape-type field based on version
             if "shape" in tool_json:
-                tool_json["shape-type"] = tool.get("Shape", "unknown")
+                parent_shape = tool.get("Shape", "unknown")
+                subtype = tool.get("SubClass") or None
+
+                if version == "v1-2":
+                    # v1.2+ understands subtypes - use subtype if set, else parent
+                    tool_json["shape-type"] = subtype if subtype else parent_shape
+                else:
+                    # v1.1 doesn't understand subtypes - always use parent shape
+                    tool_json["shape-type"] = parent_shape
 
             # v1.2+ adds units field in parameter section
             if version == "v1-2":
@@ -484,13 +519,15 @@ def make_anchor(header):
     return anchor
 
 
-def generate_index_page_content():
+def generate_index_page_content(tool_numbers=None):
     """
     Generate the main index page content for all tools with their numbers and names,
     grouped by tool type headers, with a bookmark index at the top.
     """
-    # Fetch tool numbers and names
-    tools = fetch_tool_numbers_and_details()
+    # Use pre-fetched data if provided, otherwise fetch
+    tools = (
+        tool_numbers if tool_numbers is not None else fetch_tool_numbers_and_details()
+    )
 
     # Get index page and prefix from configuration
     index_page = config["wiki_settings"]["index_page"]
@@ -539,7 +576,7 @@ def generate_index_page_content():
     return "\n".join(bookmark_lines + output_lines)
 
 
-def generate_tools_json(output_path=None, version="v1-0"):
+def generate_tools_json(output_path=None, version="v1-0", tool_numbers=None):
     """
     Generate a JSON file containing tool numbers and paths to their .fctb files.
 
@@ -556,8 +593,10 @@ def generate_tools_json(output_path=None, version="v1-0"):
         paths = get_version_paths(version)
         output_path = paths["library_path"]
 
-    # Fetch tool numbers and names
-    tools = fetch_tool_numbers_and_details()
+    # Use pre-fetched data if provided, otherwise fetch
+    tools = (
+        tool_numbers if tool_numbers is not None else fetch_tool_numbers_and_details()
+    )
 
     # Create the JSON structure
     tools_data = {"tools": [], "version": 1}
@@ -1005,10 +1044,15 @@ def generate_wiki_page(tool_data):
             formatted_value = "N/A" if str(value) == "-1" else f"{int(value):,}"
         elif field in ["ToolShankSize", "ToolDiameter"]:
             formatted_value = format_measurement(
-                value, convert_to_fraction=True, add_quotes=True
+                value,
+                convert_to_fraction=True,
+                add_quotes=True,
+                strip_trailing_zeros=True,
             )
         elif field in ["OAL", "LOC"]:
-            formatted_value = format_measurement(value, add_quotes=True)
+            formatted_value = format_measurement(
+                value, add_quotes=True, strip_trailing_zeros=True
+            )
         elif field == "ToolImageFileName":
             formatted_value = (
                 str(value)
@@ -1024,7 +1068,13 @@ def generate_wiki_page(tool_data):
     return page_content
 
 
-def main(return_session=False, tool_number=None, progress_callback=None):
+def main(
+    return_session=False,
+    tool_number=None,
+    progress_callback=None,
+    subtype_lookup=None,
+    shape_cache=None,
+):
     """
     Main function to handle publishing tools to the wiki with optional progress updates.
 
@@ -1054,6 +1104,17 @@ def main(return_session=False, tool_number=None, progress_callback=None):
     if return_session:
         return session
 
+    # Build shape caches once — avoids repeated API calls inside wiki/json generation
+    # Reuse pre-built caches from the UI if provided, otherwise fetch here
+    if subtype_lookup is None or shape_cache is None:
+        _shapes_with_subtypes, _shape_cache = fetch_startup_shape_data()
+        if subtype_lookup is None:
+            subtype_lookup = build_subtype_lookup(_shapes_with_subtypes)
+        if shape_cache is None:
+            shape_cache = _shape_cache
+    # Fetch tool numbers once — shared by generate_index_page_content and generate_tools_json
+    cached_tool_numbers = fetch_tool_numbers_and_details()
+
     # try:
     if tool_number is None:
         # Process all tools
@@ -1074,7 +1135,14 @@ def main(return_session=False, tool_number=None, progress_callback=None):
         # Generate JSON files for all configured FreeCAD versions
         for version in versions:
             paths = get_version_paths(version)
-            generate_json_files([tool], columns, paths["bits_dir"], version)
+            generate_json_files(
+                [tool],
+                columns,
+                paths["bits_dir"],
+                version,
+                subtype_lookup=subtype_lookup,
+                shape_cache=shape_cache,
+            )
 
         # Publish tool to the wiki
         tool_number = tool["ToolNumber"]
@@ -1096,15 +1164,15 @@ def main(return_session=False, tool_number=None, progress_callback=None):
         # Generate QR code
         generate_qr_code(tool_number)
 
-    # Update the index page
-    index_page_content = generate_index_page_content()
+    # Update the index page (reuse already-fetched tool numbers)
+    index_page_content = generate_index_page_content(tool_numbers=cached_tool_numbers)
     upload_wiki_page(
         session, api_url, config["wiki_settings"]["index_page"], index_page_content
     )
 
-    # Generate consolidated JSON library files for all configured versions
+    # Generate consolidated JSON library files (reuse already-fetched tool numbers)
     for version in versions:
-        generate_tools_json(version=version)
+        generate_tools_json(version=version, tool_numbers=cached_tool_numbers)
 
     # Update the manifest after publishing
     manifest_dir = config.get("manifest_settings", {}).get(
@@ -1156,7 +1224,7 @@ def generate_tool_table():
     """
     # Fetch all tools
     tools, columns = fetch_tool_data()
-    
+
     # Get machine max RPM from config
     machine_max_rpm = config.get("machine_settings", {}).get("max_rpm", 24000)
 
@@ -1170,7 +1238,7 @@ def generate_tool_table():
         diameter = extract_numeric(diameter_str, field_type="dimension")
         if diameter is None:
             diameter = 0.0
-        
+
         # Calculate U value from ToolMaxRPM
         max_rpm = tool.get("ToolMaxRPM", 0)
         # Remove commas and convert to int for comparison
@@ -1181,7 +1249,7 @@ def generate_tool_table():
                 max_rpm_value = int(max_rpm)
         except (ValueError, TypeError):
             max_rpm_value = 0
-        
+
         # Determine U value based on MaxRPM
         if max_rpm_value == -1:
             u_value = "U-1"

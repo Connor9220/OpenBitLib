@@ -50,6 +50,9 @@ def main(source_dir, manifest_path):
             source_subdirs[f"CAMAssets/{version}/Tools/Library"] = os.path.join(
                 source_dir, "CAMAssets", version, "Tools", "Library"
             )
+            source_subdirs[f"CAMAssets/{version}/Tools/Shape"] = os.path.join(
+                source_dir, "CAMAssets", version, "Tools", "Shape"
+            )
 
     # Add common paths
     source_subdirs["PostProcessor"] = os.path.join(source_dir, "PostProcessor")
@@ -58,14 +61,13 @@ def main(source_dir, manifest_path):
     # Scan each subdir
     for group, path in source_subdirs.items():
         if os.path.isdir(path):
-            manifest[group] = list_files(path)
+            manifest[group] = sorted(list_files(path))
         else:
             manifest[group] = []
 
-    # Write manifest
+    # Write manifest (sort keys for stable output)
     with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-    print(f"Manifest written to {manifest_path}")
+        json.dump(manifest, f, indent=2, sort_keys=True)
 
 
 if __name__ == "__main__":

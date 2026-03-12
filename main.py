@@ -8,10 +8,14 @@ from db_utils import (
     fetch_image_hash,
     fetch_shapes,
     fetch_shapes_by_type,
+    fetch_shape_subtypes,
+    fetch_shapes_with_subtypes,
+    fetch_startup_shape_data,
     fetch_tool_data,
     fetch_tool_numbers_and_details,
     fetch_unique_column_values,
     insert,
+    resolve_shape_info,
     update,
     update_image_hash,
 )
@@ -200,7 +204,9 @@ async def api_fetch_image_hash(tool_id: int):
 
 
 @app.get("/shapes")
-async def api_fetch_shapes(shape_name: Optional[str] = None, shape_type: Optional[str] = None):
+async def api_fetch_shapes(
+    shape_name: Optional[str] = None, shape_type: Optional[str] = None
+):
     """
     API endpoint to fetch shapes or specific shape details.
 
@@ -216,7 +222,90 @@ async def api_fetch_shapes(shape_name: Optional[str] = None, shape_type: Optiona
             result = fetch_shapes_by_type(shape_type=shape_type)
         else:
             result = fetch_shapes(shape_name=shape_name)
+
         return {"shapes": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/startup_shape_data")
+async def api_startup_shape_data():
+    """
+    Return shapes_with_subtypes and shape_cache in a single response.
+    Replaces separate /shapes_with_subtypes + /all_shapes_data calls at startup.
+    """
+    try:
+        shapes_with_subtypes, shape_cache = fetch_startup_shape_data()
+        return {
+            "startup_shape_data": {
+                "shapes_with_subtypes": shapes_with_subtypes,
+                "shape_cache": {
+                    shape_type: {
+                        "ShapeName": sd.ShapeName,
+                        "ShapeParameter": sd.ShapeParameter,
+                        "ShapeAttribute": sd.ShapeAttribute,
+                    }
+                    for shape_type, sd in shape_cache.items()
+                },
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/shape_subtypes")
+async def api_fetch_shape_subtypes(shape_type: Optional[str] = None):
+    """
+    API endpoint to fetch subtypes for a given shape type.
+
+    Args:
+        shape_type (Optional[str]): The shape type to fetch subtypes for. If None, fetches all subtypes.
+
+    Returns:
+        dict: A dictionary containing the list of subtypes.
+    """
+    try:
+        result = fetch_shape_subtypes(shape_type=shape_type)
+        return {"subtypes": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/shapes_with_subtypes")
+async def api_fetch_shapes_with_subtypes():
+    """
+    API endpoint to fetch all shapes with their subtypes in a hierarchical structure.
+
+    Returns:
+        dict: A dictionary mapping shape types to their subtypes.
+    """
+    try:
+        result = fetch_shapes_with_subtypes()
+        return {"shapes_with_subtypes": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/resolve_shape")
+async def api_resolve_shape(shape_value: str, subclass: str = None):
+    """
+    API endpoint to resolve shape information.
+    With the new schema, Shape is always the parent and SubClass is the subtype.
+
+    Args:
+        shape_value (str): Value from the Shape column (always parent shape)
+        subclass (str, optional): Value from SubClass column (subtype name)
+
+    Returns:
+        dict: Shape information including parent_shape, subtype, and is_subtype flag
+    """
+    try:
+        result = {
+            "parent_shape": shape_value,
+            "subtype": subclass or None,
+            "is_subtype": bool(subclass),
+        }
+        return {"shape_info": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

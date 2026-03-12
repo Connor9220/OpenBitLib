@@ -29,12 +29,11 @@ from gentoolwiki import (
     generate_index_page_content,
     upload_wiki_page,
     generate_tools_json,
-    generate_tool_table,
     map_column_names,
 )
-from fixtool import main as merge_tool_tables
 
 from db_utils import *
+from shape_tree_widget import ShapeTreeComboBox
 
 from fractions import Fraction
 
@@ -153,6 +152,11 @@ class ToolDatabaseGUI(QMainWindow):
         )  # Ensure the timer only triggers once after reset
         self.search_timer.timeout.connect(self.perform_search)
         self.original_shape = None
+        self._loading_tool = False
+        self.subtype_lookup = {}  # Built once at startup in init_page2
+        self.shape_cache = (
+            {}
+        )  # Built once at startup in init_page2: {shape_type: ShapeData}
 
         # Initialize database connection
         # self.db = DatabaseManager()
@@ -210,6 +214,7 @@ class ToolDatabaseGUI(QMainWindow):
             "ToolName": "Tool Name",
             "ToolType": "Tool Type",
             "Shape": "Shape",
+            "SubClass": "Sub Class",
             "ToolShankSize": "Shank Size",
             "Flutes": "Flutes",
             "OAL": "Overall Length",
@@ -280,6 +285,8 @@ class ToolDatabaseGUI(QMainWindow):
         )
         self.table.itemClicked.connect(self.load_tool_into_form)
         self.table.setSortingEnabled(True)
+        self.table.verticalHeader().setVisible(False)  # Hide row numbers
+        # self.table.verticalHeader().setMinimumWidth(30)  # Set minimum width to prevent shrinking
         self.layout.addWidget(self.table)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
@@ -513,8 +520,8 @@ class ToolDatabaseGUI(QMainWindow):
         self.page2_fields = {
             "Shape": {
                 "label": self.COLUMN_LABELS["Shape"],
-                "widget": QComboBox(),
-                "width": 200,
+                "widget": ShapeTreeComboBox(),
+                "width": 250,
             },
             "Stickout": {
                 "label": self.COLUMN_LABELS["Stickout"],
@@ -553,14 +560,17 @@ class ToolDatabaseGUI(QMainWindow):
                     lambda name=field: self.format_field(name)
                 )
 
-        shapes = fetch_shapes()
+        # Fetch all shape data in a single API/DB call at startup
+        shapes_with_subtypes, self.shape_cache = fetch_startup_shape_data()
+        self.subtype_lookup = build_subtype_lookup(shapes_with_subtypes)
         if "Shape" in self.tool_inputs and isinstance(
-            self.tool_inputs["Shape"], QComboBox
+            self.tool_inputs["Shape"], ShapeTreeComboBox
         ):
-            self.tool_inputs["Shape"].clear()  # Clear existing items
-            self.tool_inputs["Shape"].addItems(shapes)
-            # self.tool_inputs["Shape"].currentTextChanged.connect(self.update_table_with_non_direct_fields)
-            self.tool_inputs["Shape"].currentTextChanged.connect(self.on_shape_changed)
+            self.tool_inputs["Shape"].populate_shapes(shapes_with_subtypes)
+            # Connect to the custom signal that provides both shape and subtype
+            self.tool_inputs["Shape"].shapeSelectionChanged.connect(
+                self.on_shape_changed_tree
+            )
 
         # Populate the 'Units' combo box
         if "Units" in self.tool_inputs and isinstance(
@@ -574,6 +584,7 @@ class ToolDatabaseGUI(QMainWindow):
 
         # Add Table Widget for Non-Direct Fields
         self.tableWidget = QTableWidget()
+        self.tableWidget.itemClicked.connect(self.focus_value_field)
         self.tableWidget.setColumnCount(2)
         self.tableWidget.setHorizontalHeaderLabels(["Field Name", "Value"])
         self.tableWidget.setEditTriggers(
@@ -709,20 +720,6 @@ class ToolDatabaseGUI(QMainWindow):
         # else:
         #    QMessageBox.warning(self, "Invalid URL", "The URL field is empty or invalid.")
 
-    def setup_table(self):
-        """Setup the data table."""
-        self.table = QTableWidget()
-        self.table.setMinimumHeight(
-            self.table.verticalHeader().defaultSectionSize() * 7
-        )
-        self.table.itemClicked.connect(self.load_tool_into_form)
-
-        # Set column headers dynamically
-        headers = [self.COLUMN_LABELS.get(col, col) for col in self.column_names]
-        self.table.setColumnCount(len(headers))
-        self.table.setHorizontalHeaderLabels(headers)
-        self.layout.addWidget(self.table)
-
     def get_column_index_by_name(self, table_widget, column_name):
         """
         Retrieve the column index for a given column name in the table widget.
@@ -794,21 +791,11 @@ class ToolDatabaseGUI(QMainWindow):
         return "".join(word.capitalize() for word in words)
 
     def initialize_column_indices(self):
-        """
-        Initialize column indices for ShapeParameter and ShapeAttribute.
-        Also, dump the current state of the table for debugging.
-        """
-        # Get and print table headers
+        """Initialize column indices for ShapeParameter and ShapeAttribute."""
         headers = [
             self.table.horizontalHeaderItem(col).text()
             for col in range(self.table.columnCount())
         ]
-
-        for row in range(self.table.rowCount()):
-            row_data = []
-            for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                row_data.append(item.text() if item else "EMPTY")
 
         # Initialize column indices for ShapeParameter and ShapeAttribute
         self.shape_parameter_col = (
@@ -835,10 +822,14 @@ class ToolDatabaseGUI(QMainWindow):
             tool_row (int): The selected row index in the `table` widget.
         """
 
-        selected_shape_type = self.tool_inputs["Shape"].currentText()
+        # Get the parent shape type from the Shape widget
+        if isinstance(self.tool_inputs["Shape"], ShapeTreeComboBox):
+            selected_shape_type = self.tool_inputs["Shape"].get_shape()
+        else:
+            selected_shape_type = self.tool_inputs["Shape"].currentText()
 
-        # Fetch shape data by shape_type
-        shape_data = fetch_shapes_by_type(selected_shape_type)
+        # Fetch shape data from startup cache (no API call needed)
+        shape_data = self.shape_cache.get(selected_shape_type)
         if not shape_data:
             self.tableWidget.clearContents()
             self.tableWidget.setRowCount(0)
@@ -886,8 +877,6 @@ class ToolDatabaseGUI(QMainWindow):
         self.tableWidget.setRowCount(len(non_direct_fields))
         self.tableWidget.setColumnCount(2)
         self.tableWidget.setHorizontalHeaderLabels(["Field Name", "Value"])
-
-        self.tableWidget.itemClicked.connect(self.focus_value_field)
 
         for row, field in enumerate(non_direct_fields):
             # Convert JSON name to SQLite name and then to a human-readable format
@@ -941,17 +930,8 @@ class ToolDatabaseGUI(QMainWindow):
         self.tableWidget.setCurrentCell(row, column)
         self.tableWidget.editItem(value_item)  # Start editing the Value field
 
-        try:
-            # Get the item in the Value column
-            value_item = self.tableWidget.item(row, column)
-            if value_item is None:
-                return
-            # Set focus and start editing
-            self.tableWidget.setCurrentCell(row, column)
-            self.tableWidget.editItem(value_item)  # Start editing the Value field
-        finally:
-            # Reconnect the signal after execution
-            self.tableWidget.itemClicked.connect(self.focus_value_field)
+        self.tableWidget.setCurrentCell(row, column)
+        self.tableWidget.editItem(value_item)  # Start editing the Value field
 
     def update_page_fields_visibility(
         self, layout, always_visible_fields, specific_fields
@@ -1149,7 +1129,7 @@ class ToolDatabaseGUI(QMainWindow):
                 return label_widget
         return None
 
-    def load_data(self, data=None):
+    def load_data(self, data=None, column_names=None):
         """
         Populate the table widget with tool data.
 
@@ -1163,8 +1143,8 @@ class ToolDatabaseGUI(QMainWindow):
             data, sql_columns = fetch_tool_data()  # Fetch data and columns dynamically
         else:
             sql_columns = (
-                self.column_names
-            )  # Assume provided data aligns with `self.column_names`
+                column_names  # Assume provided data aligns with `self.column_names`
+            )
 
         # Columns to hide (but still load into the table)
         hidden_columns = {
@@ -1172,6 +1152,7 @@ class ToolDatabaseGUI(QMainWindow):
             "ImageHash",
             "ShapeParameter",
             "ShapeAttribute",
+            "SubClass",  # Hide SubClass from table view
         }
 
         # Set headers and populate the table
@@ -1188,6 +1169,14 @@ class ToolDatabaseGUI(QMainWindow):
                 if col_name == "ToolMaxRPM" and isinstance(value, int):
                     # Format RPM with commas
                     value = f"{value:,}"
+                elif col_name == "Shape" and value:
+                    # Format shape display: "Endmill - Long Reach" or just "Endmill"
+                    # Shape is always the parent; SubClass holds the subtype
+                    subclass = row_data.get("SubClass")
+                    if subclass:
+                        formatted_subtype = format_subtype_display_name(subclass)
+                        value = f"{value} - {formatted_subtype}"
+                    # else: just show the parent shape as-is
                 self.table.setItem(
                     row_idx,
                     col_idx,
@@ -1219,6 +1208,7 @@ class ToolDatabaseGUI(QMainWindow):
             item (QTableWidgetItem): The selected item from the table widget.
             Used to determine the corresponding row data.
         """
+        self._loading_tool = True
         row = item.row()
 
         # Get header labels and map them back to field names
@@ -1261,6 +1251,17 @@ class ToolDatabaseGUI(QMainWindow):
                 # Handle standard widgets
                 if isinstance(widget, FilterableComboBox):
                     widget.set_selected_value(value)
+                elif isinstance(widget, ShapeTreeComboBox):
+                    # row_data["Shape"] may be the formatted display value "Endmill - Downcut"
+                    # because it was formatted that way for the table. Strip the subtype part.
+                    raw_shape = row_data.get("Shape", "")
+                    if " - " in raw_shape:
+                        parent_shape = raw_shape.split(" - ", 1)[0].strip()
+                    else:
+                        parent_shape = raw_shape
+                    subtype = row_data.get("SubClass") or None
+                    if parent_shape:
+                        widget.set_selection(parent_shape, subtype)
                 elif isinstance(widget, QLineEdit):
                     widget.setText(value)
                 elif isinstance(widget, QTextEdit):
@@ -1269,13 +1270,15 @@ class ToolDatabaseGUI(QMainWindow):
                     widget.setCurrentText(value)
 
         # Track the original shape
-        if "Shape" in self.tool_inputs and isinstance(
-            self.tool_inputs["Shape"], QComboBox
-        ):
-            self.original_shape = self.tool_inputs["Shape"].currentText()
+        if "Shape" in self.tool_inputs:
+            if isinstance(self.tool_inputs["Shape"], ShapeTreeComboBox):
+                self.original_shape = self.tool_inputs["Shape"].get_shape()
+            elif isinstance(self.tool_inputs["Shape"], QComboBox):
+                self.original_shape = self.tool_inputs["Shape"].currentText()
 
         # Set the button to "Update" mode
         self.set_update_button_mode(is_edit_mode=True)
+        self._loading_tool = False
         self.update_table_with_non_direct_fields(row)
 
     def search_tools(self):
@@ -1286,10 +1289,10 @@ class ToolDatabaseGUI(QMainWindow):
         """Perform the actual search operation."""
         keyword = self.search_input.text().strip()
         if keyword:
-            filtered_data, _ = fetch_filtered(
+            filtered_data, column_names = fetch_filtered(
                 keyword
             )  # Assume fetch_filtered handles searching
-            self.load_data(filtered_data)
+            self.load_data(filtered_data, column_names)
         else:
             self.load_data()  # Load all data when the input is empty
 
@@ -1308,8 +1311,16 @@ class ToolDatabaseGUI(QMainWindow):
         shape_attributes = {}
 
         # Step 1: Fetch shape data once
-        shape_type = self.tool_inputs["Shape"].currentText()
-        shape_data = fetch_shapes_by_type(shape_type)
+        # Handle ShapeTreeComboBox specially
+        if isinstance(self.tool_inputs.get("Shape"), ShapeTreeComboBox):
+            shape_widget = self.tool_inputs["Shape"]
+            shape_type = shape_widget.get_shape()
+            shape_subtype = shape_widget.get_subtype()
+        else:
+            shape_type = self.tool_inputs["Shape"].currentText()
+            shape_subtype = None
+
+        shape_data = self.shape_cache.get(shape_type)
 
         if shape_data:
             shape_parameters_list = json.loads(shape_data.ShapeParameter or "[]")
@@ -1347,7 +1358,9 @@ class ToolDatabaseGUI(QMainWindow):
 
             # Handle non-special fields
             if not widget:
-                data[column] = None  # Handle missing widgets gracefully
+                # SubClass is set when processing Shape (ShapeTreeComboBox) - don't overwrite
+                if column != "SubClass":
+                    data[column] = None  # Handle missing widgets gracefully
                 continue
 
             # Check if the widget is a container with a layout
@@ -1369,6 +1382,17 @@ class ToolDatabaseGUI(QMainWindow):
                     data[column] = widget.text().strip()
                 elif isinstance(widget, QTextEdit):
                     data[column] = widget.toPlainText().strip()
+                elif isinstance(widget, ShapeTreeComboBox):
+                    # Store parent shape in Shape, subtype in SubClass
+                    if column == "Shape":
+                        data["Shape"] = widget.get_shape()
+                        data["SubClass"] = widget.get_subtype() or None
+                    else:
+                        data[column] = (
+                            widget.currentText().strip()
+                            if widget.currentText()
+                            else None
+                        )
                 elif isinstance(widget, QComboBox):
                     data[column] = (
                         widget.currentText().strip() if widget.currentText() else None
@@ -1415,10 +1439,15 @@ class ToolDatabaseGUI(QMainWindow):
                         widget.clear()
                     elif isinstance(widget, QComboBox):
                         widget.setCurrentIndex(0)
+                    elif isinstance(widget, ShapeTreeComboBox):
+                        # Set default to Endmill (no subtype)
+                        widget.set_selection("Endmill", None)
 
-            # Set default for Shape field
-            if "Shape" in self.tool_inputs and isinstance(
-                self.tool_inputs["Shape"], QComboBox
+            # Set default for Shape field (legacy QComboBox support)
+            if (
+                "Shape" in self.tool_inputs
+                and isinstance(self.tool_inputs["Shape"], QComboBox)
+                and not isinstance(self.tool_inputs["Shape"], ShapeTreeComboBox)
             ):
                 self.tool_inputs["Shape"].setCurrentText("endmill.fcstd")
                 self.original_shape = None
@@ -1456,6 +1485,27 @@ class ToolDatabaseGUI(QMainWindow):
             # self.clear_dependent_fields()
             self.update_table_with_non_direct_fields(-1)  # Clear the table
 
+    def on_shape_changed_tree(self, shape_type, subtype_name):
+        """
+        Handle changes to the Shape tree selection (shape and subtype).
+
+        Args:
+            shape_type (str): The selected shape type (parent)
+            subtype_name (str): The selected subtype name (or empty string if none)
+        """
+        # Skip if we're in the middle of programmatically loading a tool
+        if getattr(self, "_loading_tool", False):
+            return
+        # Compare new shape with the original parent shape
+        if shape_type == self.original_shape:
+            # Reload data for the original Shape
+            current_row = self.table.currentRow()
+            if current_row >= 0:
+                self.update_table_with_non_direct_fields(current_row)
+        else:
+            # Clear dependent fields and non-direct fields table
+            self.update_table_with_non_direct_fields(-1)  # Clear the table
+
     def update_tool(self):
         """
         Update an existing tool or insert a new one if the ToolNumber doesn't exist.
@@ -1486,11 +1536,15 @@ class ToolDatabaseGUI(QMainWindow):
             progress.setValue(0)
             QApplication.processEvents()
 
-        # Perform save and publish operations
-        all_data, columns = fetch_tool_data()
-        existing_tool_numbers = [
-            str(row["ToolNumber"]) for row in all_data
-        ]  # Access by key
+        # Determine operation type from already-loaded table (no extra API call needed)
+        tool_number_col = self.get_column_index_by_name(
+            self.table, self.COLUMN_LABELS.get("ToolNumber", "Tool Number")
+        )
+        existing_tool_numbers = set()
+        for row_idx in range(self.table.rowCount()):
+            item = self.table.item(row_idx, tool_number_col)
+            if item:
+                existing_tool_numbers.add(item.text())
         data = self.get_form_data()
         operation_type = "updated" if tool_number in existing_tool_numbers else "added"
 
@@ -1513,7 +1567,10 @@ class ToolDatabaseGUI(QMainWindow):
 
             # Perform the publishing operation with progress updates
             result = wiki_main(
-                tool_number=int(tool_number), progress_callback=progress_update
+                tool_number=int(tool_number),
+                progress_callback=progress_update,
+                subtype_lookup=self.subtype_lookup,
+                shape_cache=self.shape_cache,
             )
 
             if result["status"] == "success":
@@ -1574,23 +1631,17 @@ class ToolDatabaseGUI(QMainWindow):
                 QApplication.processEvents()
 
             # Perform the publishing operation with progress updates
-            result = wiki_main(tool_number=None, progress_callback=progress_update)
+            result = wiki_main(
+                tool_number=None,
+                progress_callback=progress_update,
+                subtype_lookup=self.subtype_lookup,
+                shape_cache=self.shape_cache,
+            )
 
             progress.setValue(100)  # Complete progress
             QApplication.processEvents()
 
             if result["status"] == "success":
-                # Generate tool table and merge after successful publishing
-                try:
-                    tool_table_data = generate_tool_table()
-                    merge_tool_tables(update_data=tool_table_data)
-                except Exception as e:
-                    QMessageBox.warning(
-                        self,
-                        "Tool Table Warning",
-                        f"Tools published successfully, but failed to generate or merge tool table: {str(e)}",
-                    )
-
                 QMessageBox.information(
                     self,
                     "Success",
